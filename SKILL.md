@@ -1,38 +1,75 @@
 ---
 name: pdf-to-md-with-necessary-image-cropping-retained
-description: Convert PDF textbooks and documents into analysis-ready Markdown with printed page numbers, LaTeX formulas, and necessary cropped images stored beside the Markdown file.
+description: Convert PDF textbooks, papers, and technical documents into analysis-ready Markdown with stable PDF/printed-page mapping, conservative LaTeX, necessary cropped visual assets, and machine-readable validation.
 metadata:
-  short-description: PDF to Markdown with LaTeX and matched image crops
+  short-description: Inspect, convert, crop, validate, and manifest PDF-to-Markdown output
 ---
 
 # PDF-to-MD with Necessary Image Cropping Retained
 
-Convert a PDF into a clean, analysis-oriented Markdown deliverable while keeping the information an agent needs to reason about the source: readable text order, printed page references, usable LaTeX, and real image assets.
+Use this skill when a PDF must become searchable, citeable Markdown for later
+agent analysis. The original PDF remains authoritative for exact visual layout.
 
-## Scope and defaults
+## Required workflow
 
-- Resolve the exact input PDF, requested page range, and output directory before converting. If the user asks for a sample (for example, the first 20 pages), process only that range and do not start a full-book run.
-- This skill's default conversion path is local and controllable: inspect the PDF text layer, render pages when needed, and use local extraction/OCR tools. Do not invoke MinerU as the conversion engine unless the user explicitly requests MinerU.
-- Keep the Markdown file and all referenced cropped images in the same output subfolder unless the user specifies another layout.
+1. Resolve the input PDF, the requested page range, and an output directory. A
+   sample request such as “first 20 pages” must never start a full-book run.
+2. Inspect before converting:
 
-## Conversion workflow
+   ```text
+   python scripts/inspect_pdf.py input.pdf --pages 1-20 --json output/inspection.json
+   ```
 
-1. Inspect the PDF structure and representative pages. Distinguish PDF page indices from printed page numbers, and identify pages with multi-column text, tables, formulas, diagrams, or full-page artwork.
-2. Extract text with a layout-aware method first; use raw extraction as a cross-check when columns or text boxes are misordered. Use OCR only when the PDF has no usable text layer. Reorder columns by visual reading order rather than trusting a single extraction mode.
-3. Remove only repeated running headers, footers, page numbers, separator rules, and extraction-only glyph fragments. Preserve legitimate punctuation, footnotes, section labels, and text that continues across a page boundary. Add `<!-- PDF page N -->` markers so the source location remains recoverable.
-4. Convert headings and subheadings into a consistent Markdown hierarchy. Preserve the table of contents as structured Markdown and retain its printed page numbers (for example, `- 1. 质点 参考系 …… 11`). Do not omit page numbers merely to reduce noise; they are useful for citation and source navigation.
-5. Preserve mathematical content as LaTeX: use inline `$...$` for short expressions and display `$$...$$` for standalone formulas. Normalize common expressions such as `×`, fractions, powers, units, and coordinate variables. If a formula is uncertain, keep the source crop and flag the uncertainty instead of silently inventing a value.
-6. Identify necessary visual assets: figures, diagrams, plots, tables, problem-box illustrations, and meaningful cover/artwork. Render the relevant page at sufficient resolution and crop the asset. Use deterministic names such as `fig_1_2_1_time_axis.png`; the Markdown image path, alt text, and filename must agree exactly. Avoid including unrelated prose in a crop, but retain surrounding context when the source uses an inseparable full-page composition.
-7. For tables, preserve a readable crop for visual fidelity. If the user needs table querying or text-only analysis, also transcribe the table into Markdown or CSV; an image alone is not searchable by a text-only pass.
+3. Convert through the reusable CLI. `auto` uses the lightest available path
+   that can satisfy the inspection signals, then records the decision:
 
-## Validation
+   ```text
+   python scripts/convert_pdf.py input.pdf -o output/ --pages 1-20 --engine auto --table-mode both --formula-mode latex
+   ```
 
-Run the bundled validator when the Markdown is generated:
+4. Validate the Markdown and its manifest:
 
-```text
-python scripts/validate_md_assets.py path/to/output.md
-```
+   ```text
+   python scripts/validate_md_assets.py output/input.md --manifest output/conversion_manifest.json --json output/validation_report.json
+   ```
 
-The final check should confirm that every relative Markdown image reference exists beside the Markdown file, there are no missing assets, LaTeX delimiters are balanced, page markers match the requested range, and repeated headers/obvious extraction garbage are gone. Visually inspect representative crops (cover, diagram, table, formula, and problem-box image) before reporting completion.
+## Routing rules
 
-Report the output Markdown path, image directory, processed page range, counts of image references and formula blocks, and any remaining limitations. For complex layouts, state that the original PDF remains the authority for exact visual placement and use it for spot checks.
+- Prefer PyMuPDF/PyMuPDF4LLM for born-digital, low-complexity pages. Poppler is
+  a compatibility fallback when the core Python package is missing.
+- Run the fast path first, then use the inspection signals and quality gate to
+  decide whether an installed Marker or Docling adapter is warranted. Use
+  MinerU only as a heavy OCR/layout fallback or when the user explicitly
+  selects it; it is not a universal default.
+- Preserve requested partial ranges. An optional whole-document engine must
+  not silently convert pages outside the request.
+- Page markers distinguish `pdf_page` from `printed_page`; unknown printed
+  numbers stay unknown. Use `--printed-page-offset` or `--printed-page-map`
+  when the mapping is known rather than guessing.
+- Use conservative LaTeX: `$...$` for inline math and `$$...$$` for display
+  math. If recognition is uncertain, retain source text, create a formula
+  crop when possible, and mark the uncertainty.
+- Extract necessary figures, diagrams, plots, tables, and inseparable visual
+  elements by bounding box. Do not use one full-page screenshot per page as a
+  substitute for image extraction; full-page scan captures are exceptions and
+  must be recorded in the manifest.
+- Keep image files beside the Markdown file. Generated image stems, alt text,
+  and relative paths must be deterministic and mutually traceable.
+- Tables should have a visual crop and a structured Markdown representation
+  when the text layer makes that representation reliable; otherwise report the
+  limitation explicitly.
+- Treat `PASS`, `WARN`, and `FAIL` as quality states. Never silently accept
+  missing page markers, missing assets, unbalanced math, or suspected garbage.
+
+## Supporting references
+
+Read only the reference relevant to the current decision:
+
+- [pipeline.md](references/pipeline.md) for routing, page-level escalation,
+  manifest fields, and the stable CLI contract.
+- [pymupdf.md](references/pymupdf.md) for the fast path and crop heuristics.
+- [marker.md](references/marker.md), [docling.md](references/docling.md), or
+  [mineru.md](references/mineru.md) before installing or invoking an optional
+  engine.
+- [quality-gates.md](references/quality-gates.md) for interpretation of
+  validator checks and unresolved warnings.

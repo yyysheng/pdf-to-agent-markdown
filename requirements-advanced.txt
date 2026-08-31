@@ -1,0 +1,8 @@
+# Install only when inspection/quality-gate signals justify an advanced engine.
+# Marker code is Apache-2.0; its model weights have separate terms (see
+# references/marker.md).
+marker-pdf>=1.0
+
+# Alternative layout/structure path.  The full package supplies the CLI;
+# docling-slim can be selected with PDF/CLI extras when size matters.
+docling>=2.0

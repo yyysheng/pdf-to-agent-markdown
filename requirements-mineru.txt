@@ -1,0 +1,3 @@
+# Heavy OCR/layout fallback.  This may download model files on first use.
+# See references/mineru.md for local CLI and Windows/WSL notes.
+mineru[all]
