@@ -1,75 +1,91 @@
 ---
 name: pdf-to-md-with-necessary-image-cropping-retained
-description: Convert PDF textbooks, papers, and technical documents into analysis-ready Markdown with stable PDF/printed-page mapping, conservative LaTeX, necessary cropped visual assets, and machine-readable validation.
+description: Transcribe complete PDF textbooks, papers, and technical documents into vision-first, Agent-readable Markdown with conservative formulas, necessary visual evidence, semantic structure, and PDF page traceability.
 metadata:
-  short-description: Inspect, convert, crop, validate, and manifest PDF-to-Markdown output
+  short-description: Read PDFs directly and progressively transcribe faithful Agent-readable Markdown
 ---
 
 # PDF-to-MD with Necessary Image Cropping Retained
 
-Use this skill when a PDF must become searchable, citeable Markdown for later
-agent analysis. The original PDF remains authoritative for exact visual layout.
+Use this skill when the user wants a PDF transcribed into Markdown for later
+search, retrieval, or analysis. The original PDF is the source of truth.
 
-## Required workflow
+## Core rule
 
-1. Resolve the input PDF, the requested page range, and an output directory. A
-   sample request such as “first 20 pages” must never start a full-book run.
-2. Inspect before converting:
+When Codex can read the PDF pages or obtain their rendered visuals directly,
+read the original PDF first. Use the PDF's text layer only as supporting
+evidence for copying long prose. Do not send the document through a third-party
+parser before the Agent has seen the relevant pages. Do not let a parser decide
+reading order, headings, formulas, table cells, captions, or which visuals are
+meaningful.
 
-   ```text
-   python scripts/inspect_pdf.py input.pdf --pages 1-20 --json output/inspection.json
-   ```
+The output is semantic transcription, not a pixel/layout replica and not a
+summary. Preserve definitions, explanations, examples, questions, solutions,
+units, and qualifications while removing only layout noise.
 
-3. Convert through the reusable CLI. `auto` uses the lightest available path
-   that can satisfy the inspection signals, then records the decision:
+## Workflow
 
-   ```text
-   python scripts/convert_pdf.py input.pdf -o output/ --pages 1-20 --engine auto --table-mode both --formula-mode latex
-   ```
+1. Accept a complete PDF as the normal input. Do not ask the user to split it.
+   If the user explicitly requests a range or sample, process only that range.
+2. Establish the total page count and begin the target Markdown early. For a
+   book, read the cover and table of contents directly, retain the contents,
+   and build the chapter/section hierarchy.
+3. For a long document, choose internal reading windows dynamically from
+   context capacity, chapter boundaries, page complexity, and visual density.
+   Read a coherent section, transcribe it immediately, then continue to the
+   next section. Keep writing/updating the same Markdown file; never expose
+   internal batches or fixed page-size rules in the output.
+4. Reconstruct natural semantic structure: title, chapters, sections,
+   subsections, examples, notes, sidebars, exercises, and solutions. Prefer
+   section meaning over PDF coordinates or page order when a page contains
+   multiple columns or boxes, but preserve every source-page transition.
+5. Add `<!-- PDF page N -->` at every page transition. Add
+   `| printed page M` only when the printed number is visually certain. Never
+   infer it from an offset, and never treat an unknown printed page as a
+   transcription failure.
+6. Transcribe formulas from page visuals. Use LaTeX for confirmed superscripts,
+   subscripts, fractions, radicals, Greek symbols, vectors, matrices, sums,
+   integrals, scientific notation, and units. If a glyph or relation is
+   uncertain, do not guess: retain the confirmed expression, add a clearly
+   labeled `Transcription note`, and keep a bounded visual crop when useful.
+7. Decide visually which regions contain information that text cannot preserve.
+   Retain necessary diagrams, apparatus, free-body/circuit/optical diagrams,
+   axes, curves, maps, meaningful illustrations, complex tables, and exercise
+   figures. Crop only the smallest useful region with a stable filename and
+   reference that exact file. Do not retain decorative backgrounds, logos,
+   watermarks, separators, or one full-page screenshot per page. If cropping is
+   unavailable, finish the text transcription and record the pending visual
+   review instead of blocking the task.
+8. Rebuild visually clear tables as Markdown tables. If cell boundaries,
+   merged cells, values, or units are not reliable, retain the table visual and
+   add only a qualified structural description; never invent cells.
+9. Keep source content separate from Agent judgments. Use
+   `> [Transcription note: ...]` for uncertainty, provenance, or review items;
+   do not disguise Agent explanations as book text.
+10. Before finishing, verify chapter continuity, formula delimiters, page
+    markers, image links, unresolved notes, and that the final requested page
+    was reached. Run `scripts/validate_md_assets.py` as an optional deterministic
+    QA helper, then visually recheck every pending item against the PDF.
 
-4. Validate the Markdown and its manifest:
+## Long-document checkpoint
 
-   ```text
-   python scripts/validate_md_assets.py output/input.md --manifest output/conversion_manifest.json --json output/validation_report.json
-   ```
+For work likely to be interrupted, maintain a small sibling
+`conversion_state.json` with the source, last completed PDF page, current
+section, Markdown path, pending review pages, and `in_progress`/`completed`
+status. It is only a checkpoint. On resume, verify the last marker before
+continuing so content is not duplicated. See
+[references/long-document-workflow.md](references/long-document-workflow.md).
 
-## Routing rules
+## Supporting guidance
 
-- Prefer PyMuPDF/PyMuPDF4LLM for born-digital, low-complexity pages. Poppler is
-  a compatibility fallback when the core Python package is missing.
-- Run the fast path first, then use the inspection signals and quality gate to
-  decide whether an installed Marker or Docling adapter is warranted. Use
-  MinerU only as a heavy OCR/layout fallback or when the user explicitly
-  selects it; it is not a universal default.
-- Preserve requested partial ranges. An optional whole-document engine must
-  not silently convert pages outside the request.
-- Page markers distinguish `pdf_page` from `printed_page`; unknown printed
-  numbers stay unknown. Use `--printed-page-offset` or `--printed-page-map`
-  when the mapping is known rather than guessing.
-- Use conservative LaTeX: `$...$` for inline math and `$$...$$` for display
-  math. If recognition is uncertain, retain source text, create a formula
-  crop when possible, and mark the uncertainty.
-- Extract necessary figures, diagrams, plots, tables, and inseparable visual
-  elements by bounding box. Do not use one full-page screenshot per page as a
-  substitute for image extraction; full-page scan captures are exceptions and
-  must be recorded in the manifest.
-- Keep image files beside the Markdown file. Generated image stems, alt text,
-  and relative paths must be deterministic and mutually traceable.
-- Tables should have a visual crop and a structured Markdown representation
-  when the text layer makes that representation reliable; otherwise report the
-  limitation explicitly.
-- Treat `PASS`, `WARN`, and `FAIL` as quality states. Never silently accept
-  missing page markers, missing assets, unbalanced math, or suspected garbage.
+- [references/markdown-format.md](references/markdown-format.md) for the
+  semantic Markdown and traceability contract.
+- [references/math-transcription.md](references/math-transcription.md) for
+  conservative visual formula handling.
+- [references/visual-retention.md](references/visual-retention.md) for
+  necessary crop decisions and the optional helper.
+- [references/long-document-workflow.md](references/long-document-workflow.md)
+  for progressive transcription and checkpointing.
 
-## Supporting references
-
-Read only the reference relevant to the current decision:
-
-- [pipeline.md](references/pipeline.md) for routing, page-level escalation,
-  manifest fields, and the stable CLI contract.
-- [pymupdf.md](references/pymupdf.md) for the fast path and crop heuristics.
-- [marker.md](references/marker.md), [docling.md](references/docling.md), or
-  [mineru.md](references/mineru.md) before installing or invoking an optional
-  engine.
-- [quality-gates.md](references/quality-gates.md) for interpretation of
-  validator checks and unresolved warnings.
+The optional `scripts/pdf_helpers.py` provides only page count, page rendering,
+and explicitly requested bbox cropping. It is not a semantic PDF parser.

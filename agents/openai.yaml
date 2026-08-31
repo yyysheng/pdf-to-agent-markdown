@@ -1,7 +1,7 @@
 interface:
   display_name: "PDF-to-MD with Necessary Image Cropping Retained"
-  short_description: "Inspect, convert, crop, validate, and manifest PDF-to-MD output"
-  default_prompt: "Use $pdf-to-md-with-necessary-image-cropping-retained to inspect this PDF, convert the requested pages into analysis-ready Markdown, retain necessary cropped images and conservative LaTeX, then validate and report the manifest."
+  short_description: "Read PDFs visually and progressively transcribe Agent-readable Markdown"
+  default_prompt: "Use $pdf-to-md-with-necessary-image-cropping-retained to read this PDF directly, reconstruct faithful semantic Markdown progressively, preserve necessary visual evidence and conservative LaTeX, retain PDF page markers, and run optional QA."
 
 policy:
   allow_implicit_invocation: true
