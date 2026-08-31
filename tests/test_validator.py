@@ -11,6 +11,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from validate_md_assets import delimiter_errors, validate_markdown  # noqa: E402
 
 
+FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures"
+
+
 class ValidatorTests(unittest.TestCase):
     def test_agent_transcription_contract_passes_without_manifest(self) -> None:
         with tempfile.TemporaryDirectory(prefix="pdf_md_validator_") as temp:
@@ -80,6 +83,66 @@ class ValidatorTests(unittest.TestCase):
             )
             report = validate_markdown(markdown, expected_pages=[1], manifest_path=manifest)
             self.assertEqual(report["status"], "PASS")
+
+    def test_chinese_prose_inside_math_is_a_hard_failure(self) -> None:
+        markdown = FIXTURE_ROOT / "chinese_prose_inside_math.md"
+        report = validate_markdown(markdown, expected_pages=[1])
+        self.assertEqual(report["status"], "FAIL")
+        self.assertEqual(report["summary"]["suspicious_math_blocks"], 1)
+        check = next(item for item in report["checks"] if item["id"] == "math.chinese_prose")
+        self.assertEqual(check["status"], "FAIL")
+
+    def test_visually_confirmed_math_passes(self) -> None:
+        markdown = FIXTURE_ROOT / "visually_confirmed_math.md"
+        report = validate_markdown(markdown, expected_pages=[1])
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(report["summary"]["suspicious_math_blocks"], 0)
+
+    def test_short_chinese_math_label_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pdf_md_validator_math_label_") as temp:
+            markdown = Path(temp) / "book.md"
+            markdown.write_text(
+                "# Book\n\n<!-- PDF page 1 -->\n\n$$F_{\\text{合力}}=ma$$\n",
+                encoding="utf-8",
+            )
+            report = validate_markdown(markdown, expected_pages=[1])
+            self.assertEqual(report["status"], "PASS")
+            self.assertEqual(report["summary"]["suspicious_math_blocks"], 0)
+
+    def test_suspicious_unicode_garbage_is_a_hard_failure(self) -> None:
+        markdown = FIXTURE_ROOT / "suspicious_unicode_garbage.md"
+        report = validate_markdown(markdown, expected_pages=[1])
+        self.assertEqual(report["status"], "FAIL")
+        self.assertGreaterEqual(report["summary"]["suspicious_garbage"], 1)
+        check = next(item for item in report["checks"] if item["id"] == "text.garbage")
+        self.assertEqual(check["status"], "FAIL")
+
+    def test_replacement_and_private_use_characters_fail(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pdf_md_validator_unicode_") as temp:
+            markdown = Path(temp) / "book.md"
+            markdown.write_text("# Book\n\n<!-- PDF page 1 -->\n\n\ufffd \ue000\n", encoding="utf-8")
+            report = validate_markdown(markdown, expected_pages=[1])
+            self.assertEqual(report["status"], "FAIL")
+            self.assertEqual(report["summary"]["suspicious_garbage"], 2)
+
+    def test_normal_chinese_text_does_not_trigger_garbage_check(self) -> None:
+        markdown = FIXTURE_ROOT / "normal_chinese.md"
+        report = validate_markdown(markdown, expected_pages=[1])
+        self.assertEqual(report["status"], "PASS")
+        self.assertEqual(report["summary"]["suspicious_garbage"], 0)
+
+    def test_excessive_transcription_notes_warn(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pdf_md_validator_notes_") as temp:
+            markdown = Path(temp) / "book.md"
+            pages = []
+            for page in range(1, 11):
+                pages.append(f"<!-- PDF page {page} -->\n\n> [Transcription note: unresolved item]\n")
+            markdown.write_text("# Book\n\n" + "\n".join(pages), encoding="utf-8")
+            report = validate_markdown(markdown, expected_pages=list(range(1, 11)))
+            self.assertEqual(report["status"], "WARN")
+            self.assertEqual(report["summary"]["transcription_notes"], 10)
+            check = next(item for item in report["checks"] if item["id"] == "notes.excessive")
+            self.assertEqual(check["status"], "WARN")
 
 
 if __name__ == "__main__":

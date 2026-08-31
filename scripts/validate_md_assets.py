@@ -12,6 +12,7 @@ import argparse
 import json
 import re
 import sys
+import unicodedata
 from collections import Counter
 from pathlib import Path
 from typing import Any, Iterable
@@ -21,8 +22,25 @@ from urllib.parse import unquote
 IMAGE_RE = re.compile(r"!\[([^\]]*)\]\((?:<([^>]+)>|([^\s)]+))(?:\s+[^)]*)?\)")
 PAGE_RE = re.compile(r"<!--\s*PDF page\s+(\d+)(?:\s*\|\s*printed page\s+(\d+|unknown))?\s*-->")
 HEADING_RE = re.compile(r"^(#{1,6})\s+(.*?)\s*$")
-PRIVATE_USE_RE = re.compile(r"[\ue000-\uf8ff]")
+PRIVATE_USE_RE = re.compile(r"[\ue000-\uf8ff\U000f0000-\U000ffffd\U00100000-\U0010fffd]")
 IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".svg", ".gif"}
+DISPLAY_MATH_RE = re.compile(r"\$\$(?P<content>[\s\S]*?)\$\$")
+INLINE_MATH_RE = re.compile(r"(?<!\$)\$(?!\$)(?P<content>[^$\n]*?)(?<!\\)\$(?!\$)")
+PAREN_MATH_RE = re.compile(r"\\\((?P<content>[\s\S]*?)(?<!\\)\\\)")
+BRACKET_MATH_RE = re.compile(r"\\\[(?P<content>[\s\S]*?)(?<!\\)\\\]")
+MATH_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002fa1f]")
+MATH_TEXT_LABEL_RE = re.compile(r"\\(?:text|mathrm|operatorname)\s*\{[^{}]*\}")
+TRANSCRIPTION_NOTE_RE = re.compile(r"\[Transcription note:", re.IGNORECASE)
+EXPECTED_LETTER_SCRIPTS = (
+    "LATIN",
+    "GREEK",
+    "CJK UNIFIED IDEOGRAPH",
+    "CJK COMPATIBILITY",
+    "HIRAGANA",
+    "KATAKANA",
+    "MICRO SIGN",
+    "IDEOGRAPHIC ITERATION MARK",
+)
 
 
 def _check(checks: list[dict[str, Any]], check_id: str, status: str, message: str, **details: Any) -> None:
@@ -45,6 +63,76 @@ def local_image_refs(markdown: str) -> list[str]:
     """Return local Markdown image paths for callers that need a small API."""
 
     return [reference for _alt, reference in _image_matches(markdown)]
+
+
+def _math_matches(markdown: str) -> list[tuple[str, str, int]]:
+    """Return math spans as ``(delimiter_kind, content, character_offset)``."""
+
+    matches: list[tuple[str, str, int]] = []
+    for kind, pattern in (
+        ("display", DISPLAY_MATH_RE),
+        ("inline", INLINE_MATH_RE),
+        ("parenthesized", PAREN_MATH_RE),
+        ("bracketed", BRACKET_MATH_RE),
+    ):
+        matches.extend((kind, match.group("content"), match.start()) for match in pattern.finditer(markdown))
+    return sorted(matches, key=lambda item: item[2])
+
+
+def suspicious_math_blocks(markdown: str) -> list[str]:
+    """Find math spans that contain likely prose rather than a formula.
+
+    Short labels explicitly wrapped in ``\\text{...}`` are tolerated. Any CJK
+    character outside such a label is treated as a high-confidence extraction
+    error: even a short fragment may be prose that was accidentally wrapped in
+    a math block.
+    """
+
+    findings: list[str] = []
+    for kind, content, offset in _math_matches(markdown):
+        content_without_labels = MATH_TEXT_LABEL_RE.sub("", content)
+        if not MATH_CJK_RE.search(content_without_labels):
+            continue
+        line_number = markdown.count("\n", 0, offset) + 1
+        snippet = " ".join(content.split())
+        findings.append(f"{kind} math at line {line_number} contains likely Chinese prose: {snippet[:160]}")
+    return findings
+
+
+def _is_unexpected_letter(character: str) -> bool:
+    if not character.isalpha():
+        return False
+    name = unicodedata.name(character, "")
+    return bool(name) and not any(script in name for script in EXPECTED_LETTER_SCRIPTS)
+
+
+def suspicious_garbage(markdown: str) -> list[str]:
+    """Find high-confidence Unicode extraction garbage.
+
+    Replacement/private-use characters always fail.  Other scripts are only
+    reported when they cluster tightly, reducing false positives for ordinary
+    Latin, Greek, and CJK textbook text while catching mixed-script corruption.
+    """
+
+    findings: list[str] = []
+    if "�" in markdown:
+        findings.append("replacement character U+FFFD")
+    if PRIVATE_USE_RE.search(markdown):
+        findings.append("private-use character")
+
+    unexpected = [index for index, character in enumerate(markdown) if _is_unexpected_letter(character)]
+    if len(unexpected) >= 2:
+        tightly_clustered = any(second - first <= 24 for first, second in zip(unexpected, unexpected[1:]))
+        if tightly_clustered:
+            examples = "".join(markdown[index] for index in unexpected[:8])
+            findings.append(f"clustered unexpected-script letters near text: {examples}")
+    return findings
+
+
+def _transcription_note_stats(markdown: str, page_count: int) -> tuple[int, float]:
+    count = len(TRANSCRIPTION_NOTE_RE.findall(markdown))
+    ratio = count / max(1, page_count)
+    return count, ratio
 
 
 def delimiter_errors(markdown: str) -> list[str]:
@@ -252,6 +340,18 @@ def validate_markdown(
         _check(checks, "math.delimiters", "FAIL", "LaTeX delimiters are unbalanced", errors=math_errors)
     else:
         _check(checks, "math.delimiters", "PASS", "LaTeX delimiters are balanced")
+    suspicious_math = suspicious_math_blocks(markdown)
+    if suspicious_math:
+        errors.append(f"{len(suspicious_math)} math block(s) contain likely Chinese prose")
+        _check(
+            checks,
+            "math.chinese_prose",
+            "FAIL",
+            "math block(s) contain likely Chinese prose; visually recheck the source page",
+            blocks=suspicious_math,
+        )
+    else:
+        _check(checks, "math.chinese_prose", "PASS", "no obvious Chinese prose inside math")
 
     heading_warnings = _heading_warnings(markdown)
     if heading_warnings:
@@ -259,16 +359,34 @@ def validate_markdown(
         _check(checks, "markdown.headings", "WARN", "Markdown heading structure needs review", details=heading_warnings)
     else:
         _check(checks, "markdown.headings", "PASS", "Markdown heading structure is present")
-    garbage = []
-    if "�" in markdown:
-        garbage.append("replacement character U+FFFD")
-    if PRIVATE_USE_RE.search(markdown):
-        garbage.append("private-use character")
+    garbage = suspicious_garbage(markdown)
     if garbage:
-        warnings.append("possible extraction garbage: " + ", ".join(garbage))
-        _check(checks, "text.garbage", "WARN", "possible extraction garbage found", patterns=garbage)
+        errors.append("suspicious Unicode garbage requires visual recheck: " + ", ".join(garbage))
+        _check(checks, "text.garbage", "FAIL", "suspicious Unicode garbage found; recheck the source page", patterns=garbage)
     else:
         _check(checks, "text.garbage", "PASS", "no obvious extraction garbage")
+    note_count, note_ratio = _transcription_note_stats(markdown, len(pages))
+    if note_count >= 10 and (note_ratio >= 0.20 or note_count >= 25):
+        warnings.append(
+            f"excessive unresolved transcription notes: {note_count} note(s) across {len(pages)} page marker(s)"
+        )
+        _check(
+            checks,
+            "notes.excessive",
+            "WARN",
+            "excessive unresolved transcription notes; resolve visually when possible",
+            count=note_count,
+            page_ratio=round(note_ratio, 4),
+        )
+    else:
+        _check(
+            checks,
+            "notes.excessive",
+            "PASS",
+            "transcription note volume is not excessive",
+            count=note_count,
+            page_ratio=round(note_ratio, 4),
+        )
     for value in forbidden:
         if value in markdown:
             errors.append(f"forbidden residual text found: {value!r}")
@@ -295,6 +413,9 @@ def validate_markdown(
             "page_markers": len(pages),
             "inline_math_markers": len(re.findall(r"(?<!\\)\$(?!\$)", markdown.replace("$$", ""))),
             "display_math_blocks": markdown.count("$$") // 2,
+            "suspicious_math_blocks": len(suspicious_math),
+            "transcription_notes": note_count,
+            "suspicious_garbage": len(garbage),
             "headings": sum(1 for line in markdown.splitlines() if HEADING_RE.match(line)),
             "printed_page_check_required": require_printed_pages,
         },

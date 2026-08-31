@@ -19,6 +19,17 @@ parser before the Agent has seen the relevant pages. Do not let a parser decide
 reading order, headings, formulas, table cells, captions, or which visuals are
 meaningful.
 
+Treat the evidence sources explicitly:
+
+```text
+PDF visual = primary evidence
+text layer = secondary copying aid
+```
+
+The text layer may reduce copying cost for ordinary prose, but it is never
+evidence that the Agent has visually checked a page. When text extraction and
+the rendered page disagree, follow the page visual.
+
 The output is semantic transcription, not a pixel/layout replica and not a
 summary. Preserve definitions, explanations, examples, questions, solutions,
 units, and qualifications while removing only layout noise.
@@ -43,37 +54,62 @@ units, and qualifications while removing only layout noise.
    `| printed page M` only when the printed number is visually certain. Never
    infer it from an offset, and never treat an unknown printed page as a
    transcription failure.
-6. Transcribe formulas from page visuals. Use LaTeX for confirmed superscripts,
-   subscripts, fractions, radicals, Greek symbols, vectors, matrices, sums,
-   integrals, scientific notation, and units. If a glyph or relation is
-   uncertain, do not guess: retain the confirmed expression, add a clearly
-   labeled `Transcription note`, and keep a bounded visual crop when useful.
-7. Decide visually which regions contain information that text cannot preserve.
-   Retain necessary diagrams, apparatus, free-body/circuit/optical diagrams,
-   axes, curves, maps, meaningful illustrations, complex tables, and exercise
-   figures. Crop only the smallest useful region with a stable filename and
-   reference that exact file. Do not retain decorative backgrounds, logos,
-   watermarks, separators, or one full-page screenshot per page. If cropping is
-   unavailable, finish the text transcription and record the pending visual
-   review instead of blocking the task.
+6. Treat every formula, mathematical expression, superscript, subscript,
+   fraction, radical, Greek letter, vector, matrix, or unit relationship as a
+   `Visual-required page` item. Do not turn a text-layer fragment into LaTeX
+   without looking at the original page. If the visual confirms the structure,
+   write conservative LaTeX; if it does not, preserve only what is confirmed,
+   keep a bounded formula crop when useful, and add a page-specific
+   `Transcription note` rather than guessing. Chinese prose must not enter a
+   math block unless it is a short, necessary mathematical label.
+7. Decide visually which regions contain information that text cannot preserve,
+   and make the retention decision immediately. Retain necessary diagrams,
+   apparatus, free-body/circuit/optical diagrams, axes, curves, maps,
+   meaningful illustrations, complex tables, and exercise figures. Crop only
+   the smallest useful region with a stable filename and reference that exact
+   file. A crop included in final Markdown means the Agent has already judged it
+   necessary; do not attach a generic "confirm later" note. Do not retain
+   decorative backgrounds, logos, watermarks, separators, or one full-page
+   screenshot per page. If cropping is unavailable, record only that specific
+   unresolved visual item.
 8. Rebuild visually clear tables as Markdown tables. If cell boundaries,
    merged cells, values, or units are not reliable, retain the table visual and
    add only a qualified structural description; never invent cells.
 9. Keep source content separate from Agent judgments. Use
-   `> [Transcription note: ...]` for uncertainty, provenance, or review items;
-   do not disguise Agent explanations as book text.
-10. Before finishing, verify chapter continuity, formula delimiters, page
-    markers, image links, unresolved notes, and that the final requested page
-    was reached. Run `scripts/validate_md_assets.py` as an optional deterministic
-    QA helper, then visually recheck every pending item against the PDF.
+   `> [Transcription note: ...]` only for a concrete uncertainty, provenance
+   fact, or unresolved visual item; do not disguise Agent explanations as book
+   text and do not use notes as a queue for work that can be solved now.
+10. Before finishing, run `scripts/validate_md_assets.py` and repair every
+    `FAIL`. In particular, Chinese prose inside math and suspicious Unicode
+    garbage are hard failures, not deferred warnings. Resolve every
+    `Visual-required page` that the current environment can inspect, then
+    verify chapter continuity, formula delimiters, page markers, image links,
+    note volume, and that the final requested page was reached.
+
+## Visual-required pages and completion
+
+The following pages require actual page-visual inspection before they can be
+marked complete: pages containing formulas, images, tables, coordinate plots,
+experimental apparatus, force diagrams, circuits, optical paths, complex
+multi-column or boxed layouts, obvious text-layer anomalies, or text whose
+reading order is not coherent. Ordinary clean prose may be text-assisted, but
+it still receives a source-page marker.
+
+A page may be treated as `transcribed` after its text is drafted. It is
+`visually_verified` only after the required visual checks and immediate crop
+necessity decision are complete. Use `needs_review` only when the source page
+is genuinely unreadable, damaged, missing, inaccessible, or remains ambiguous
+after repeated visual inspection. For a requested range, `status: completed`
+requires no outstanding `visual_review_required` pages; a populated
+`pending_review` list must name the concrete unresolved reason.
 
 ## Long-document checkpoint
 
 For work likely to be interrupted, maintain a small sibling
-`conversion_state.json` with the source, last completed PDF page, current
-section, Markdown path, pending review pages, and `in_progress`/`completed`
-status. It is only a checkpoint. On resume, verify the last marker before
-continuing so content is not duplicated. See
+`conversion_state.json` with the source, `last_completed_pdf_page`, current
+section, Markdown path, `pending_review`, and `visual_review_required` pages,
+plus `in_progress`/`completed` status. It is only a checkpoint. On resume,
+verify the last marker before continuing so content is not duplicated. See
 [references/long-document-workflow.md](references/long-document-workflow.md).
 
 ## Supporting guidance
