@@ -8,7 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from validate_md_assets import delimiter_errors, validate_markdown  # noqa: E402
+from validate_md_assets import delimiter_errors, suspicious_formula_artifacts, validate_markdown  # noqa: E402
 
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures"
@@ -108,6 +108,40 @@ class ValidatorTests(unittest.TestCase):
             report = validate_markdown(markdown, expected_pages=[1])
             self.assertEqual(report["status"], "PASS")
             self.assertEqual(report["summary"]["suspicious_math_blocks"], 0)
+
+    def test_formula_artifact_scoring_and_page_locator(self) -> None:
+        expected = {
+            "artifact_fraction_flattened_a.md": ("FAIL", 107),
+            "artifact_fraction_flattened_b.md": ("FAIL", 107),
+            "artifact_label_residue.md": ("WARN", 82),
+            "artifact_compact_tokens.md": ("FAIL", 111),
+        }
+        for filename, (status, page) in expected.items():
+            markdown = FIXTURE_ROOT / filename
+            report = validate_markdown(markdown, expected_pages=[page])
+            self.assertEqual(report["status"], status)
+            self.assertEqual(report["summary"]["suspicious_formula_artifact"], 1)
+            finding = suspicious_formula_artifacts(markdown.read_text(encoding="utf-8"))[0]
+            self.assertEqual(finding["pdf_page"], page)
+            self.assertGreaterEqual(finding["artifact_score"], 3)
+            self.assertIn("reopen the source page", finding["message"])
+
+    def test_normal_formula_fixtures_do_not_trigger_artifact_screen(self) -> None:
+        for markdown in sorted(FIXTURE_ROOT.glob("normal_formula_*.md")):
+            report = validate_markdown(markdown, expected_pages=[1])
+            self.assertEqual(report["status"], "PASS", markdown.name)
+            self.assertEqual(report["summary"]["suspicious_formula_artifact"], 0, markdown.name)
+
+    def test_unit_rich_latex_formula_is_not_a_flattening_finding(self) -> None:
+        markdown = r"""# Unit-rich formula
+
+<!-- PDF page 45 -->
+
+$$
+v=v_0+at=10,mathrm{m/s}+0.6,mathrm{m/s^2}	imes10,mathrm{s}=16,mathrm{m/s}
+$$
+"""
+        self.assertEqual(suspicious_formula_artifacts(markdown), [])
 
     def test_suspicious_unicode_garbage_is_a_hard_failure(self) -> None:
         markdown = FIXTURE_ROOT / "suspicious_unicode_garbage.md"

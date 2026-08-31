@@ -81,10 +81,30 @@ units, and qualifications while removing only layout noise.
    text and do not use notes as a queue for work that can be solved now.
 10. Before finishing, run `scripts/validate_md_assets.py` and repair every
     `FAIL`. In particular, Chinese prose inside math and suspicious Unicode
-    garbage are hard failures, not deferred warnings. Resolve every
+    garbage are hard failures, not deferred warnings. Treat a
+    `math.extraction_artifact` `WARN` or `FAIL` as a request to reopen the
+    original PDF page, not as a formula to repair from context. Resolve every
     `Visual-required page` that the current environment can inspect, then
     verify chapter continuity, formula delimiters, page markers, image links,
     note volume, and that the final requested page was reached.
+
+## Formula extraction-artifact gate
+
+Syntactically balanced LaTeX is not evidence that the formula was visually
+confirmed. The validator's `math.extraction_artifact` check is deliberately
+structural: it accumulates independent signs such as digit/letter flattening,
+isolated number fragments, fraction-like broken layout, flattened unit
+exponents, full-width math punctuation, low LaTeX-structure density, and dense
+alternating letter/number tokens. It does not evaluate physics, solve
+equations, or rewrite Markdown.
+
+Scores `3–5` are `WARN`; scores `6` or higher are `FAIL`. Every finding carries
+the nearest PDF page marker, line number, score, signals, and snippet. For
+either status, reopen the source page and visually reconstruct the expression
+before marking that page `visually_verified`. Never use physical intuition to
+turn a flagged fragment into a plausible formula. If the source remains
+unreadable, keep only the confirmed portion, add a page-specific
+`Transcription note`, and retain the page in `pending_review`.
 
 ## Visual-required pages and completion
 
@@ -97,9 +117,12 @@ it still receives a source-page marker.
 
 A page may be treated as `transcribed` after its text is drafted. It is
 `visually_verified` only after the required visual checks and immediate crop
-necessity decision are complete. Use `needs_review` only when the source page
+necessity decision are complete. A page containing a formula cannot be marked
+`visually_verified` merely because its math delimiters are balanced or its
+LaTeX is syntactically valid. Use `needs_review` only when the source page
 is genuinely unreadable, damaged, missing, inaccessible, or remains ambiguous
-after repeated visual inspection. For a requested range, `status: completed`
+after repeated visual inspection. A `math.extraction_artifact` `WARN` or
+`FAIL` must be cleared by source-page visual review before completion. For a requested range, `status: completed`
 requires no outstanding `visual_review_required` pages; a populated
 `pending_review` list must name the concrete unresolved reason.
 

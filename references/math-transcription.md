@@ -32,12 +32,27 @@ Required workflow for a suspected formula:
 4. Run the deterministic validator and repair any suspicious math finding
    before continuing.
 
+The validator also runs a structural `math.extraction_artifact` screen. Scores
+from 3 to 5 are warnings and scores of 6 or more are failures. Signals include
+compressed digit/letter tokens such as `v102`, isolated number fragments,
+fraction-like line flattening, unit exponents such as `m/s2`, full-width math
+punctuation, low LaTeX-structure density, and dense alternating
+letter/number tokens. These signals locate likely text-layer damage; they do
+not establish the correct equation.
+
 When any glyph, exponent, sign, denominator, or subscript remains uncertain:
 
 1. transcribe only what is visually confirmed;
 2. keep the uncertain source expression or a bounded crop;
 3. add a page-specific `Transcription note` naming the uncertainty;
 4. mark the page as needing review instead of claiming visual completion.
+
+For a `math.extraction_artifact` warning or failure, reopen the source PDF page
+identified in the report and then transcribe the visually confirmed expression.
+Do not repair the fragment by applying a familiar physics formula or by
+guessing the missing fraction, exponent, or subscript. A formula page is not
+`visually_verified` until the artifact finding disappears or the page is
+explicitly left in `pending_review` with a concrete reason.
 
 Never place a normal Chinese sentence in `$$...$$`, `$...$`, `\(...\)`, or
 `\[...\]`. Short labels such as `\text{合力}` may be retained when the page

@@ -41,6 +41,24 @@ EXPECTED_LETTER_SCRIPTS = (
     "MICRO SIGN",
     "IDEOGRAPHIC ITERATION MARK",
 )
+COMPACT_TOKEN_RE = re.compile(
+    r"(?<![_^{}\\])\b(?:[A-Za-z]{2,}\d+|[A-Za-z]+\d{2,}|[A-Za-z]+\d+[A-Za-z]+\d+)\b"
+)
+FLATTENED_UNIT_RE = re.compile(
+    r"(?<![\\^_{}A-Za-z])(?:m\s*/\s*s|N\s*/\s*kg|m\s*·\s*s)\s*\d+(?![A-Za-z0-9])"
+)
+FULLWIDTH_MATH_PUNCT_RE = re.compile(r"[（），。＋－＝：；]")
+FULLWIDTH_EQUATION_LABEL_RE = re.compile(r"（\s*\d+\s*）")
+LATEX_STRUCTURE_RE = re.compile(
+    r"(?:[_^{}]|\\(?:frac|dfrac|tfrac|sqrt|cdot|times|mathrm|text|operatorname|"
+    r"sin|cos|tan|log|ln|Delta|alpha|beta|gamma|theta|mu|pi|sum|int|le|ge|approx|pm|perp|parallel)(?![A-Za-z]))"
+)
+MATH_TOKEN_RE = re.compile(r"[A-Za-z]+|\d+(?:\.\d+)?")
+PLAIN_NUMBER_RE = re.compile(r"(?:(?<=\s)|(?<=[=＋＝]))\d+(?:\.\d+)?(?=\s|$)")
+BROKEN_EQUAL_RE = re.compile(r"=\s*=")
+FRAGMENT_LINE_RE = re.compile(r"(?:[A-Za-z]{1,4}|\d+(?:\.\d+)?|[=＋－+\-])")
+ARTIFACT_WARN_THRESHOLD = 3
+ARTIFACT_FAIL_THRESHOLD = 6
 
 
 def _check(checks: list[dict[str, Any]], check_id: str, status: str, message: str, **details: Any) -> None:
@@ -133,6 +151,117 @@ def _transcription_note_stats(markdown: str, page_count: int) -> tuple[int, floa
     count = len(TRANSCRIPTION_NOTE_RE.findall(markdown))
     ratio = count / max(1, page_count)
     return count, ratio
+
+
+def _nearest_pdf_page(markdown: str, offset: int) -> int | None:
+    page: int | None = None
+    for match in PAGE_RE.finditer(markdown):
+        if match.start() > offset:
+            break
+        page = int(match.group(1))
+    return page
+
+
+def _artifact_structure_hits(content: str) -> list[str]:
+    return LATEX_STRUCTURE_RE.findall(content)
+
+
+def _math_artifact_score(content: str) -> tuple[int, list[dict[str, Any]]]:
+    """Score high-confidence signs of a flattened PDF text-layer formula.
+
+    The score is intentionally structural. It does not attempt to infer the
+    equation's meaning or repair it.
+    """
+
+    raw_content = content
+    content = MATH_TEXT_LABEL_RE.sub("", content)
+    signals: list[dict[str, Any]] = []
+
+    def add_signal(signal_id: str, points: int, evidence: Any) -> None:
+        signals.append({"id": signal_id, "score": points, "evidence": evidence})
+
+    compact_tokens = COMPACT_TOKEN_RE.findall(content)
+    if compact_tokens:
+        add_signal("digit_letter_flattening", 2, compact_tokens[:8])
+
+    plain_numbers = PLAIN_NUMBER_RE.findall(content)
+    if len(plain_numbers) >= 2 and len(content) >= 20:
+        add_signal("isolated_number_fragments", 2, plain_numbers[:8])
+
+    fragment_lines = [
+        line.strip()
+        for line in content.splitlines()
+        if line.strip() and FRAGMENT_LINE_RE.fullmatch(line.strip())
+    ]
+    if len(fragment_lines) >= 2 or (BROKEN_EQUAL_RE.search(content) and "\\frac" not in content):
+        add_signal("fraction_like_broken_structure", 3, fragment_lines[:6] or ["spaced equality"])
+
+    flattened_units = FLATTENED_UNIT_RE.findall(content)
+    if flattened_units:
+        add_signal("flattened_unit_exponent", 1, flattened_units[:8])
+
+    fullwidth_punctuation = FULLWIDTH_MATH_PUNCT_RE.findall(content)
+    if fullwidth_punctuation:
+        add_signal("fullwidth_math_punctuation", 1, fullwidth_punctuation[:8])
+
+    if FULLWIDTH_EQUATION_LABEL_RE.search(content):
+        add_signal("orphan_equation_label", 2, FULLWIDTH_EQUATION_LABEL_RE.findall(content)[:4])
+
+    # Keep explicit LaTeX structure visible for the density screen.  Removing
+    # \\mathrm{...} labels is useful for token signals, but would otherwise
+    # make a correctly formatted unit-heavy formula look flattened.
+    structure_hits = _artifact_structure_hits(raw_content)
+    if (
+        len(content) >= 24
+        and len(structure_hits) <= 2
+        and re.search(r"[A-Za-z]", content)
+        and re.search(r"\d", content)
+    ):
+        add_signal("low_latex_structure_density", 1, {"structure_hits": len(structure_hits)})
+
+    tokens = MATH_TOKEN_RE.findall(content)
+    token_kinds = ["letter" if token[0].isalpha() else "number" for token in tokens]
+    transitions = sum(first != second for first, second in zip(token_kinds, token_kinds[1:]))
+    if len(tokens) >= 7 and transitions >= 4 and len(structure_hits) <= 3:
+        add_signal("dense_alternating_tokens", 2, {"tokens": tokens[:12], "transitions": transitions})
+
+    score = sum(signal["score"] for signal in signals)
+    return score, signals
+
+
+def suspicious_formula_artifacts(markdown: str) -> list[dict[str, Any]]:
+    """Report math spans that look like flattened text-layer extraction.
+
+    This is a structural screen only. It deliberately does not decide whether
+    a formula is physically correct and never rewrites the source expression.
+    """
+
+    findings: list[dict[str, Any]] = []
+    for kind, content, offset in _math_matches(markdown):
+        if kind != "display":
+            continue
+        score, signals = _math_artifact_score(content)
+        if score < ARTIFACT_WARN_THRESHOLD:
+            continue
+        status = "FAIL" if score >= ARTIFACT_FAIL_THRESHOLD else "WARN"
+        line_number = markdown.count("\n", 0, offset) + 1
+        pdf_page = _nearest_pdf_page(markdown, offset)
+        page_label = f"PDF page {pdf_page}" if pdf_page is not None else "the nearest source page"
+        findings.append(
+            {
+                "status": status,
+                "artifact_score": score,
+                "signals": signals,
+                "pdf_page": pdf_page,
+                "line": line_number,
+                "snippet": " ".join(content.split())[:200],
+                "message": (
+                    f"{page_label} math block appears to contain flattened extraction artifacts; "
+                    "reopen the source page and visually verify it."
+                ),
+            }
+        )
+    return findings
 
 
 def delimiter_errors(markdown: str) -> list[str]:
@@ -352,6 +481,32 @@ def validate_markdown(
         )
     else:
         _check(checks, "math.chinese_prose", "PASS", "no obvious Chinese prose inside math")
+    artifact_findings = suspicious_formula_artifacts(markdown)
+    artifact_failures = [finding for finding in artifact_findings if finding["status"] == "FAIL"]
+    artifact_pages = sorted(
+        {finding["pdf_page"] for finding in artifact_findings if finding["pdf_page"] is not None}
+    )
+    if artifact_findings:
+        if artifact_failures:
+            errors.append(
+                f"{len(artifact_failures)} high-confidence formula extraction artifact(s) require visual recheck"
+            )
+            artifact_status = "FAIL"
+        else:
+            warnings.append(
+                f"{len(artifact_findings)} formula block(s) may contain extraction artifacts and require visual recheck"
+            )
+            artifact_status = "WARN"
+        _check(
+            checks,
+            "math.extraction_artifact",
+            artifact_status,
+            "reopen each flagged source page and visually verify the formula; validator does not repair formulas",
+            findings=artifact_findings,
+            pdf_pages=artifact_pages,
+        )
+    else:
+        _check(checks, "math.extraction_artifact", "PASS", "no high-probability formula extraction artifacts")
 
     heading_warnings = _heading_warnings(markdown)
     if heading_warnings:
@@ -414,6 +569,7 @@ def validate_markdown(
             "inline_math_markers": len(re.findall(r"(?<!\\)\$(?!\$)", markdown.replace("$$", ""))),
             "display_math_blocks": markdown.count("$$") // 2,
             "suspicious_math_blocks": len(suspicious_math),
+            "suspicious_formula_artifact": len(artifact_findings),
             "transcription_notes": note_count,
             "suspicious_garbage": len(garbage),
             "headings": sum(1 for line in markdown.splitlines() if HEADING_RE.match(line)),
