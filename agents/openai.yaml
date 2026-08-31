@@ -1,0 +1,7 @@
+interface:
+  display_name: "PDF-to-MD with Necessary Image Cropping Retained"
+  short_description: "PDF to Markdown with LaTeX and matched image crops"
+  default_prompt: "Use $pdf-to-md-with-necessary-image-cropping-retained to convert this PDF into Markdown with printed page numbers, LaTeX, and necessary cropped images."
+
+policy:
+  allow_implicit_invocation: true
