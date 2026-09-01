@@ -1,11 +1,11 @@
 ---
-name: pdf-to-md-with-necessary-image-cropping-retained
-description: Transcribe complete PDF textbooks, papers, and technical documents into vision-first, Agent-readable Markdown with conservative formulas, necessary visual evidence, semantic structure, and PDF page traceability.
+name: pdf-to-agent-markdown
+description: Vision-first transcription of complete PDFs into faithful, Agent-readable Markdown with conservative formulas, PDF page traceability, progressive long-document handling, and necessary visual retention.
 metadata:
-  short-description: Read PDFs directly and progressively transcribe faithful Agent-readable Markdown
+  short-description: Vision-first PDFs to faithful Agent-readable Markdown
 ---
 
-# PDF-to-MD with Necessary Image Cropping Retained
+# PDF to Agent Markdown
 
 Use this skill when the user wants a PDF transcribed into Markdown for later
 search, retrieval, or analysis. The original PDF is the source of truth.

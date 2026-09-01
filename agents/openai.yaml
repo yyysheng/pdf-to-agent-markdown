@@ -1,7 +1,7 @@
 interface:
-  display_name: "PDF-to-MD with Necessary Image Cropping Retained"
-  short_description: "Read PDFs visually and progressively transcribe Agent-readable Markdown"
-  default_prompt: "Use $pdf-to-md-with-necessary-image-cropping-retained to read this PDF directly, reconstruct faithful semantic Markdown progressively, preserve necessary visual evidence and conservative LaTeX, retain PDF page markers, and run optional QA."
+  display_name: "PDF to Agent Markdown"
+  short_description: "Vision-first PDFs to faithful Agent-readable Markdown"
+  default_prompt: "Use $pdf-to-agent-markdown to transcribe this complete PDF into faithful, Agent-readable Markdown with conservative formulas, PDF page traceability, progressive long-document handling, and necessary visual retention."
 
 policy:
   allow_implicit_invocation: true
