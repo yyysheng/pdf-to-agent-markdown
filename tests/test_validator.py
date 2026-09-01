@@ -8,7 +8,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 
-from validate_md_assets import delimiter_errors, suspicious_formula_artifacts, validate_markdown  # noqa: E402
+from validate_md_assets import (  # noqa: E402
+    delimiter_errors,
+    suspicious_formula_artifacts,
+    validate_conversion_state,
+    validate_markdown,
+)
 
 
 FIXTURE_ROOT = Path(__file__).resolve().parent / "fixtures"
@@ -177,6 +182,23 @@ $$
             self.assertEqual(report["summary"]["transcription_notes"], 10)
             check = next(item for item in report["checks"] if item["id"] == "notes.excessive")
             self.assertEqual(check["status"], "WARN")
+
+    def test_conversion_state_workflow_semantics(self) -> None:
+        expected = {
+            "workflow_state_completed_with_queue.json": "FAIL",
+            "workflow_state_visual_review.json": "PASS",
+            "workflow_state_completed.json": "PASS",
+            "workflow_state_completed_pending.json": "WARN",
+        }
+        for filename, status in expected.items():
+            state = json.loads((FIXTURE_ROOT / filename).read_text(encoding="utf-8"))
+            report = validate_conversion_state(state)
+            self.assertEqual(report["status"], status, filename)
+        unresolved = validate_conversion_state(
+            json.loads((FIXTURE_ROOT / "workflow_state_completed_pending.json").read_text(encoding="utf-8"))
+        )
+        self.assertEqual(unresolved["workflow_status"], "completed_with_review_items")
+        self.assertEqual(unresolved["pending_review"], 1)
 
 
 if __name__ == "__main__":

@@ -9,10 +9,17 @@ complex.
 ## State and persistence
 
 Create the Markdown output early and keep appending/updating that same file.
-For long work, maintain a small sibling `conversion_state.json` checkpoint:
+For long work, maintain a small sibling `conversion_state.json` checkpoint.
+Use schema version 3 and record the exact Skill revision that produced the
+state:
 
 ```json
 {
+  "schema_version": 3,
+  "skill": {
+    "name": "pdf-to-agent-markdown",
+    "revision": "<SHA>"
+  },
   "source": "book.pdf",
   "last_completed_pdf_page": 128,
   "completed_pdf_pages": 128,
@@ -30,8 +37,26 @@ marker and current section before continuing; never duplicate already written
 content. Keep the page state conceptually separate: `transcribed` is a draft
 text state, `visually_verified` means the required source-page inspection and
 visual-retention decision are complete, and `needs_review` is reserved for an
-actually unresolved page. Mark `completed` only after the final page and final
-review, with `visual_review_required` empty for the requested range.
+actually unresolved or interrupted page.
+
+## Phase transitions
+
+During Phase 1, keep `status: in_progress` and add formula/visual pages to
+`visual_review_required` as they are transcribed. When the final requested PDF
+page has been written, automatically change the state to
+`status: visual_review` and drain that queue. This is an active phase, not a
+request for another user message. Inspect the source page for every queue item,
+record `visually_verified_pdf_pages` only after the inspection, and either
+retain a necessary visual, replace it with faithful Markdown, or add a
+page-specific unresolved item to `pending_review`.
+
+Phase 3 starts only when `visual_review_required` is empty. Run deterministic
+QA, repair hard failures, and verify page-marker and asset continuity. A clean
+final document uses `status: completed` with both queues empty. If real
+ambiguities remain after the visual pass, use `status: completed_with_review_items`
+with concrete `pending_review` entries; do not leave the active visual queue
+populated. Such a state is complete as a transcription artifact but explicitly
+not fully resolved.
 
 ## Reading strategy
 

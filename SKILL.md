@@ -34,6 +34,28 @@ The output is semantic transcription, not a pixel/layout replica and not a
 summary. Preserve definitions, explanations, examples, questions, solutions,
 units, and qualifications while removing only layout noise.
 
+## Three-phase completion model
+
+`needs_review` is a checkpoint, not the normal final state for a complete PDF.
+Use three explicit phases:
+
+1. **Phase 1 — progressive transcription:** read the complete source in coherent
+   windows, write the Markdown continuously, and queue formula/visual pages in
+   `visual_review_required`.
+2. **Phase 2 — visual verification:** after the final transcription page is
+   reached, automatically drain `visual_review_required`. Do not wait for a new
+   user prompt. Reopen each queued source page and make the formula and visual
+   retention decision while the page evidence is available.
+3. **Phase 3 — final QA:** run deterministic validation, check that source-page
+   markers and asset links are complete, and emit a final state. A valid
+   `completed` state has empty review queues; genuine unresolved items are
+   concrete entries in `pending_review` and use
+   `completed_with_review_items`.
+
+`visually_verified` is a provenance claim, not a synonym for validator PASS.
+Only record a page there after the Agent has actually inspected the relevant
+source visual and made the immediate crop/table/formula decision.
+
 ## Workflow
 
 1. Accept a complete PDF as the normal input. Do not ask the user to split it.
@@ -61,7 +83,8 @@ units, and qualifications while removing only layout noise.
    write conservative LaTeX; if it does not, preserve only what is confirmed,
    keep a bounded formula crop when useful, and add a page-specific
    `Transcription note` rather than guessing. Chinese prose must not enter a
-   math block unless it is a short, necessary mathematical label.
+   math block unless it is a short, necessary mathematical label. Queue the
+   page in `visual_review_required` until this disposition is complete.
 7. Decide visually which regions contain information that text cannot preserve,
    and make the retention decision immediately. Retain necessary diagrams,
    apparatus, free-body/circuit/optical diagrams, axes, curves, maps,
@@ -71,7 +94,9 @@ units, and qualifications while removing only layout noise.
    necessary; do not attach a generic "confirm later" note. Do not retain
    decorative backgrounds, logos, watermarks, separators, or one full-page
    screenshot per page. If cropping is unavailable, record only that specific
-   unresolved visual item.
+   unresolved visual item. During Phase 2, every queued visual must be marked
+   retained, Markdown-sufficient, or concretely unresolved; do not leave a
+   generic future-review note.
 8. Rebuild visually clear tables as Markdown tables. If cell boundaries,
    merged cells, values, or units are not reliable, retain the table visual and
    add only a qualified structural description; never invent cells.
@@ -79,14 +104,21 @@ units, and qualifications while removing only layout noise.
    `> [Transcription note: ...]` only for a concrete uncertainty, provenance
    fact, or unresolved visual item; do not disguise Agent explanations as book
    text and do not use notes as a queue for work that can be solved now.
-10. Before finishing, run `scripts/validate_md_assets.py` and repair every
-    `FAIL`. In particular, Chinese prose inside math and suspicious Unicode
-    garbage are hard failures, not deferred warnings. Treat a
-    `math.extraction_artifact` `WARN` or `FAIL` as a request to reopen the
-    original PDF page, not as a formula to repair from context. Resolve every
-    `Visual-required page` that the current environment can inspect, then
-    verify chapter continuity, formula delimiters, page markers, image links,
-    note volume, and that the final requested page was reached.
+10. When Phase 1 reaches the final requested PDF page, transition to
+    `status: visual_review` and automatically drain every page in
+    `visual_review_required`. For each formula crop, inspect the source page:
+    confirmed structure may become conservative LaTeX (with the crop retained
+    when useful); an ambiguous structure stays crop-only or confirmed-text-only
+    and gets a concrete page-specific entry in `pending_review`. Never guess.
+    Apply the same retained/Markdown-sufficient/unresolved decision to every
+    visual region. Only after the queue is empty, run
+    `scripts/validate_md_assets.py` and repair every `FAIL`. In particular,
+    Chinese prose inside math and suspicious Unicode garbage are hard failures,
+    not deferred warnings. Treat a `math.extraction_artifact` `WARN` or `FAIL`
+    as a request to reopen the original PDF page, not as a formula to repair
+    from context. Then verify chapter continuity, formula delimiters, page
+    markers, image links, note volume, and that the final requested page was
+    reached before emitting the final state.
 
 ## Formula extraction-artifact gate
 
@@ -123,16 +155,24 @@ LaTeX is syntactically valid. Use `needs_review` only when the source page
 is genuinely unreadable, damaged, missing, inaccessible, or remains ambiguous
 after repeated visual inspection. A `math.extraction_artifact` `WARN` or
 `FAIL` must be cleared by source-page visual review before completion. For a requested range, `status: completed`
-requires no outstanding `visual_review_required` pages; a populated
-`pending_review` list must name the concrete unresolved reason.
+requires no outstanding `visual_review_required` pages and an empty
+`pending_review` list. `status: visual_review` is the legal active state while
+the queue is being drained. If the queue is empty but genuinely unresolved
+items remain, use `status: completed_with_review_items`; each pending entry
+must identify the PDF page, the specific region or content, and the reason it
+could not be resolved. `status: needs_review` may be retained for an interrupted
+checkpoint, but is not a successful final state for a complete PDF.
 
 ## Long-document checkpoint
 
 For work likely to be interrupted, maintain a small sibling
-`conversion_state.json` with the source, `last_completed_pdf_page`, current
-section, Markdown path, `pending_review`, and `visual_review_required` pages,
-plus `in_progress`/`completed` status. It is only a checkpoint. On resume,
-verify the last marker before continuing so content is not duplicated. See
+`conversion_state.json` with `schema_version: 3`,
+`skill: {name: "pdf-to-agent-markdown", revision: "<SHA>"}`, the source,
+`last_completed_pdf_page`, current section, Markdown path, `pending_review`,
+and `visual_review_required` pages, plus the workflow status. Keep
+`visual_review` distinct from the final `completed_with_review_items` state.
+It is only a checkpoint. On resume, verify the last marker before continuing so
+content is not duplicated. See
 [references/long-document-workflow.md](references/long-document-workflow.md).
 
 ## Supporting guidance

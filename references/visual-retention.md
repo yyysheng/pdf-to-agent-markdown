@@ -42,3 +42,17 @@ enhancement, not a reason to block the complete Markdown.
 
 The optional `scripts/pdf_helpers.py` can render a page or crop an explicitly
 selected PDF-point bounding box; it does not decide which region is important.
+
+## Phase 2 disposition
+
+After Phase 1 reaches the final requested page, automatically inspect every
+entry in `visual_review_required`. For each region, record one of three
+outcomes: necessary information retained as the smallest useful crop;
+faithfully replaceable by Markdown/table text with no crop; or concretely
+unresolved with a page-specific `pending_review` reason. Do not leave a generic
+"review later" note for a region that has already been retained, and do not
+claim `visually_verified` from deterministic asset validation alone.
+
+The final active visual queue must be empty. A document with unresolved but
+explicitly described regions uses `completed_with_review_items`; a clean
+`completed` document has no pending items either.

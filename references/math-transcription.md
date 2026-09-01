@@ -62,3 +62,23 @@ unresolved note is safer than incorrect LaTeX.
 
 Do not use context to manufacture a likely equation. A correct-looking LaTeX
 formula that was guessed is worse than an explicitly unresolved expression.
+
+## Phase 2 disposition
+
+Every formula crop created during progressive transcription is a Phase 2
+checkpoint item. Reopen the source PDF page and inspect the crop in context:
+
+- If every relevant glyph, grouping, exponent, sign, and unit relationship is
+  clear, replace the text-layer fragment with conservative LaTeX and retain the
+  crop only when it remains useful evidence.
+- If the expression is legible but its structure is not safe to encode, keep a
+  bounded crop or confirmed-text-only representation and add one concrete
+  `pending_review` entry naming the PDF page and the ambiguous region.
+- If the crop is decorative, redundant, or not a formula after visual review,
+  remove it and clear the queue item.
+
+After the final transcription page, automatically drain the formula queue; do
+not emit a normal final state with `visual_review_required` still populated.
+The formula counts in the final report must distinguish confirmed LaTeX from
+crop-only or unresolved evidence. A validator PASS does not make an uninspected
+formula `visually_verified`.

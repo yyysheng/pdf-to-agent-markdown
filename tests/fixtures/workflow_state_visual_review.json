@@ -1,0 +1,10 @@
+{
+  "schema_version": 3,
+  "skill": {
+    "name": "pdf-to-agent-markdown",
+    "revision": "test"
+  },
+  "status": "visual_review",
+  "visual_review_required": [12],
+  "pending_review": []
+}

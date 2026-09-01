@@ -59,10 +59,54 @@ BROKEN_EQUAL_RE = re.compile(r"=\s*=")
 FRAGMENT_LINE_RE = re.compile(r"(?:[A-Za-z]{1,4}|\d+(?:\.\d+)?|[=＋－+\-])")
 ARTIFACT_WARN_THRESHOLD = 3
 ARTIFACT_FAIL_THRESHOLD = 6
+WORKFLOW_STATUSES = {
+    "in_progress",
+    "needs_review",
+    "visual_review",
+    "completed",
+    "completed_with_review_items",
+}
 
 
 def _check(checks: list[dict[str, Any]], check_id: str, status: str, message: str, **details: Any) -> None:
     checks.append({"id": check_id, "status": status, "message": message, **details})
+
+
+def validate_conversion_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Check the small workflow-state contract without judging document meaning."""
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    workflow_status = state.get("status")
+    visual_queue = state.get("visual_review_required", [])
+    pending_review = state.get("pending_review", [])
+    if workflow_status not in WORKFLOW_STATUSES:
+        errors.append(f"unknown conversion workflow status: {workflow_status!r}")
+    if not isinstance(visual_queue, list):
+        errors.append("visual_review_required must be a list")
+        visual_queue = []
+    if not isinstance(pending_review, list):
+        errors.append("pending_review must be a list")
+        pending_review = []
+    if workflow_status in {"completed", "completed_with_review_items"} and visual_queue:
+        errors.append("a final workflow state cannot retain visual_review_required pages")
+    if workflow_status in {"completed", "completed_with_review_items"} and pending_review:
+        warnings.append(f"final workflow state reports {len(pending_review)} unresolved pending_review item(s)")
+    if workflow_status == "completed" and pending_review:
+        warnings.append("completed state has unresolved pending_review items; prefer completed_with_review_items")
+    if workflow_status == "completed_with_review_items" and not pending_review:
+        warnings.append("completed_with_review_items has no pending_review items")
+    if workflow_status == "visual_review" and not visual_queue:
+        warnings.append("visual_review has no queued pages")
+    status = "FAIL" if errors else "WARN" if warnings else "PASS"
+    return {
+        "status": status,
+        "workflow_status": workflow_status,
+        "visual_review_required": len(visual_queue),
+        "pending_review": len(pending_review),
+        "errors": errors,
+        "warnings": warnings,
+    }
 
 
 def _image_matches(markdown: str) -> list[tuple[str, str]]:
@@ -338,6 +382,7 @@ def validate_markdown(
     forbidden: Iterable[str] = (),
     require_alt_stem: bool = False,
     require_printed_pages: bool = False,
+    state_path: Path | None = None,
 ) -> dict[str, Any]:
     """Return a JSON-serializable PASS/WARN/FAIL report."""
 
@@ -556,6 +601,30 @@ def validate_markdown(
         errors.append(manifest_message)
     _check(checks, "manifest.consistency", manifest_status, manifest_message, **manifest_details)
 
+    workflow_report: dict[str, Any] | None = None
+    if state_path is not None:
+        try:
+            state = json.loads(state_path.resolve().read_text(encoding="utf-8"))
+            if not isinstance(state, dict):
+                raise ValueError("conversion state must be a JSON object")
+            workflow_report = validate_conversion_state(state)
+            errors.extend(workflow_report["errors"])
+            warnings.extend(workflow_report["warnings"])
+            _check(
+                checks,
+                "workflow.state",
+                workflow_report["status"],
+                "conversion workflow state is structurally valid"
+                if workflow_report["status"] == "PASS"
+                else "conversion workflow state needs review",
+                workflow_status=workflow_report["workflow_status"],
+                visual_review_required=workflow_report["visual_review_required"],
+                pending_review=workflow_report["pending_review"],
+            )
+        except (OSError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            errors.append(f"conversion state could not be read: {exc}")
+            _check(checks, "workflow.state", "FAIL", "conversion state could not be read", error=str(exc))
+
     status = "FAIL" if errors else "WARN" if warnings else "PASS"
     return {
         "schema_version": 2,
@@ -574,6 +643,9 @@ def validate_markdown(
             "suspicious_garbage": len(garbage),
             "headings": sum(1 for line in markdown.splitlines() if HEADING_RE.match(line)),
             "printed_page_check_required": require_printed_pages,
+            "workflow_status": workflow_report["workflow_status"] if workflow_report else None,
+            "visual_review_required": workflow_report["visual_review_required"] if workflow_report else None,
+            "pending_review": workflow_report["pending_review"] if workflow_report else None,
         },
         "pages": pages,
         "printed_pages": printed_pages,
@@ -599,6 +671,7 @@ def main() -> int:
     parser.add_argument("markdown", type=Path)
     parser.add_argument("--json", type=Path)
     parser.add_argument("--manifest", type=Path)
+    parser.add_argument("--state", type=Path, help="validate an optional conversion_state.json alongside the Markdown")
     parser.add_argument("--page-start", type=int)
     parser.add_argument("--page-end", type=int)
     parser.add_argument("--printed-page-start", type=int)
@@ -625,6 +698,7 @@ def main() -> int:
             forbidden=args.forbid,
             require_alt_stem=args.require_alt_stem,
             require_printed_pages=args.require_printed_pages,
+            state_path=args.state.resolve() if args.state else None,
         )
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
