@@ -101,6 +101,30 @@ class VisionFirstRunnerTests(unittest.TestCase):
         self.assertEqual(state.get("formula_latex_confirmed", 0), 0)
         self.assertFalse(state.get("visual_review_decisions"))
 
+    def test_explicit_page_visual_confirmation_closes_no_asset_queue(self) -> None:
+        decision_path = self.root / "page_visual_confirmation.json"
+        decision_path.write_text(
+            json.dumps({"visual_confirmed_pages": [1]}),
+            encoding="utf-8",
+        )
+        target = self.root / "page_visual_confirmation"
+        with patch.object(runner, "formula_bboxes", return_value=[]), patch.object(
+            runner, "image_bboxes", return_value=[]
+        ):
+            state = runner.convert_book(
+                self.source,
+                target,
+                force_fresh=True,
+                skill_revision="test-revision",
+                pages=[1],
+                visual_decisions_path=decision_path,
+            )
+
+        self.assertEqual(state["status"], "completed")
+        self.assertEqual(state["visual_review_required"], [])
+        self.assertEqual(state["visual_review_decisions"]["1"]["visuals"][0]["disposition"], "markdown_sufficient")
+        self.assertEqual(state["visual_review_decisions"]["1"]["visuals"][0]["verification"], "visual")
+
     def test_legacy_conservative_latex_auto_path_is_absent(self) -> None:
         self.assertFalse(hasattr(runner, "conservative_latex"))
         self.assertNotIn("def conservative_latex", inspect.getsource(runner))

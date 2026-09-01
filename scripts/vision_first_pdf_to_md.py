@@ -742,6 +742,8 @@ def phase2_visual_review(
         elif page_visual_assets:
             missing_decision = True
             page_decision["visuals"].append({"disposition": "visual_review_required"})
+        elif "visual-evidence-not-cropped" in reasons and page_number in visual_confirmed_pages:
+            page_decision["visuals"].append({"disposition": "markdown_sufficient", "verification": "visual"})
         elif "embedded-visual-retention" in reasons or "visual-evidence-not-cropped" in reasons:
             missing_decision = True
             page_decision["visuals"].append({"disposition": "visual_review_required"})
