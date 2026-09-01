@@ -11,6 +11,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from validate_md_assets import (  # noqa: E402
     delimiter_errors,
     suspicious_formula_artifacts,
+    suspicious_math_braces,
+    suspicious_math_mojibake,
     validate_conversion_state,
     validate_pending_review_semantics,
     validate_markdown,
@@ -114,6 +116,74 @@ class ValidatorTests(unittest.TestCase):
             report = validate_markdown(markdown, expected_pages=[1])
             self.assertEqual(report["status"], "PASS")
             self.assertEqual(report["summary"]["suspicious_math_blocks"], 0)
+
+    def test_legal_chinese_formula_labels_pass_brace_and_mojibake_checks(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pdf_md_validator_legal_labels_") as temp:
+            markdown = Path(temp) / "book.md"
+            markdown.write_text(
+                "# Book\n\n<!-- PDF page 1 -->\n\n"
+                "$$\n"
+                "F_{\\text{压}}=\\mu F_{\\text{压}}\n"
+                "P_{\\text{热}}=I^2R\n"
+                "v_{\\text{甲}y}=v_{\\text{甲}}\\sin\\theta\n"
+                "v_{AC,\\mathrm{平均}}=v_B\n"
+                "\\{x\\}\n"
+                "$$\n",
+                encoding="utf-8",
+            )
+            report = validate_markdown(markdown, expected_pages=[1])
+            self.assertEqual(report["status"], "PASS")
+            self.assertEqual(report["summary"]["suspicious_math_braces"], 0)
+            self.assertEqual(report["summary"]["suspicious_math_mojibake"], 0)
+            self.assertEqual(suspicious_math_braces(markdown.read_text(encoding="utf-8")), [])
+            self.assertEqual(suspicious_math_mojibake(markdown.read_text(encoding="utf-8")), [])
+
+    def test_unbalanced_latex_braces_fail_with_stack_diagnostics(self) -> None:
+        for formula in (r"F_f=\mu F_{\text{鍘媫", r"F_{n", r"F=ma}"):
+            with self.subTest(formula=formula):
+                with tempfile.TemporaryDirectory(prefix="pdf_md_validator_braces_") as temp:
+                    markdown = Path(temp) / "book.md"
+                    markdown.write_text(
+                        f"# Book\n\n<!-- PDF page 7 -->\n\n$$\n{formula}\n$$\n",
+                        encoding="utf-8",
+                    )
+                    report = validate_markdown(markdown, expected_pages=[7])
+                    self.assertEqual(report["status"], "FAIL")
+                    self.assertGreaterEqual(report["summary"]["suspicious_math_braces"], 1)
+                    check = next(item for item in report["checks"] if item["id"] == "math.braces")
+                    self.assertEqual(check["status"], "FAIL")
+                    self.assertTrue(check["findings"][0]["diagnostics"])
+
+    def test_utf8_as_gbk_mojibake_inside_label_fails_even_when_balanced(self) -> None:
+        with tempfile.TemporaryDirectory(prefix="pdf_md_validator_mojibake_") as temp:
+            markdown = Path(temp) / "book.md"
+            original = "# Book\n\n<!-- PDF page 8 -->\n\n$$v_{AC,\\mathrm{骞冲潎}}=v_B$$\n"
+            markdown.write_text(original, encoding="utf-8")
+            report = validate_markdown(markdown, expected_pages=[8])
+            self.assertEqual(report["status"], "FAIL")
+            self.assertEqual(report["summary"]["suspicious_math_braces"], 0)
+            self.assertEqual(report["summary"]["suspicious_math_mojibake"], 1)
+            check = next(item for item in report["checks"] if item["id"] == "math.mojibake")
+            self.assertEqual(check["status"], "FAIL")
+            self.assertEqual(check["findings"][0]["pdf_page"], 8)
+            self.assertIn("validator does not repair", check["findings"][0]["message"])
+
+            self.assertEqual(markdown.read_text(encoding="utf-8"), original)
+            self.assertEqual(suspicious_math_mojibake(original)[0]["recovered"], "平均")
+
+    def test_known_utf8_as_gbk_mojibake_variants_are_detected(self) -> None:
+        known_variants = ("骞冲潎", "鍘媫", "鐢瞹", "鐑瓆", "閲嶅姟")
+        for page, mojibake in enumerate(known_variants, start=10):
+            with self.subTest(mojibake=mojibake):
+                with tempfile.TemporaryDirectory(prefix="pdf_md_validator_mojibake_variant_") as temp:
+                    markdown = Path(temp) / "book.md"
+                    markdown.write_text(
+                        f"# Book\n\n<!-- PDF page {page} -->\n\n$$F_{{\\mathrm{{{mojibake}}}}}=x$$\n",
+                        encoding="utf-8",
+                    )
+                    report = validate_markdown(markdown, expected_pages=[page])
+                    self.assertEqual(report["summary"]["suspicious_math_braces"], 0)
+                    self.assertEqual(report["summary"]["suspicious_math_mojibake"], 1)
 
     def test_formula_artifact_scoring_and_page_locator(self) -> None:
         expected = {

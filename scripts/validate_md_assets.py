@@ -29,7 +29,9 @@ INLINE_MATH_RE = re.compile(r"(?<!\$)\$(?!\$)(?P<content>[^$\n]*?)(?<!\\)\$(?!\$
 PAREN_MATH_RE = re.compile(r"\\\((?P<content>[\s\S]*?)(?<!\\)\\\)")
 BRACKET_MATH_RE = re.compile(r"\\\[(?P<content>[\s\S]*?)(?<!\\)\\\]")
 MATH_CJK_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002fa1f]")
+MATH_CJK_SPAN_RE = re.compile(r"[\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U0002fa1f]+")
 MATH_TEXT_LABEL_RE = re.compile(r"\\(?:text|mathrm|operatorname)\s*\{[^{}]*\}")
+MOJIBAKE_CODECS = ("gbk", "gb18030")
 TRANSCRIPTION_NOTE_RE = re.compile(r"\[Transcription note:", re.IGNORECASE)
 EXPECTED_LETTER_SCRIPTS = (
     "LATIN",
@@ -356,13 +358,130 @@ def _math_matches(markdown: str) -> list[tuple[str, str, int]]:
     return sorted(matches, key=lambda item: item[2])
 
 
+def _latex_brace_diagnostics(content: str) -> dict[str, Any]:
+    """Return stack-based diagnostics for unescaped LaTeX braces.
+
+    A count comparison is insufficient here: it misses premature closing
+    braces and does not distinguish escaped literal braces from structure.
+    """
+
+    unmatched_open_positions: list[int] = []
+    unmatched_close_positions: list[int] = []
+    stack: list[int] = []
+    backslash_count = 0
+    for index, character in enumerate(content):
+        if character == "\\":
+            backslash_count += 1
+            continue
+        escaped = backslash_count % 2 == 1
+        backslash_count = 0
+        if escaped:
+            continue
+        if character == "{":
+            stack.append(index)
+        elif character == "}":
+            if stack:
+                stack.pop()
+            else:
+                unmatched_close_positions.append(index)
+    unmatched_open_positions.extend(stack)
+    return {
+        "unmatched_open_positions": unmatched_open_positions,
+        "unmatched_close_positions": unmatched_close_positions,
+        "balance": len(unmatched_open_positions) - len(unmatched_close_positions),
+    }
+
+
+def suspicious_math_braces(markdown: str) -> list[dict[str, Any]]:
+    """Find math spans with improperly nested unescaped braces."""
+
+    findings: list[dict[str, Any]] = []
+    for kind, content, offset in _math_matches(markdown):
+        diagnostics = _latex_brace_diagnostics(content)
+        if not diagnostics["unmatched_open_positions"] and not diagnostics["unmatched_close_positions"]:
+            continue
+        line_number = markdown.count("\n", 0, offset) + 1
+        pdf_page = _nearest_pdf_page(markdown, offset)
+        findings.append(
+            {
+                "kind": kind,
+                "line": line_number,
+                "pdf_page": pdf_page,
+                "snippet": " ".join(content.split())[:200],
+                "diagnostics": diagnostics,
+                "message": (
+                    f"{kind} math at line {line_number} has unbalanced or improperly nested "
+                    "unescaped LaTeX braces"
+                ),
+            }
+        )
+    return findings
+
+
+def _normal_printable(value: str) -> bool:
+    if not value or "�" in value:
+        return False
+    return all(character.isprintable() or character in "\t\n\r" for character in value)
+
+
+def suspicious_math_mojibake(markdown: str) -> list[dict[str, Any]]:
+    """Find likely UTF-8-as-GBK/GB18030 mojibake inside math spans.
+
+    Chinese labels in ``\\text{...}``, ``\\mathrm{...}``, and
+    ``\\operatorname{...}`` remain legal.  The detector tests their CJK spans
+    rather than dropping labels before inspection, so a high-confidence
+    encoding round-trip still fails while ordinary Chinese labels pass.
+    """
+
+    findings: list[dict[str, Any]] = []
+    seen: set[tuple[int, int, str]] = set()
+    for kind, content, offset in _math_matches(markdown):
+        for match in MATH_CJK_SPAN_RE.finditer(content):
+            span = match.group(0)
+            for codec in MOJIBAKE_CODECS:
+                try:
+                    recovered = span.encode(codec).decode("utf-8")
+                except (UnicodeEncodeError, UnicodeDecodeError):
+                    continue
+                if recovered == span or not _normal_printable(recovered):
+                    continue
+                if not (
+                    MATH_CJK_RE.search(recovered)
+                    or any(character in "{}[](),;:=+-*/^_" for character in recovered)
+                ):
+                    continue
+                key = (offset + match.start(), offset + match.end(), recovered)
+                if key in seen:
+                    continue
+                seen.add(key)
+                line_number = markdown.count("\n", 0, offset) + 1
+                pdf_page = _nearest_pdf_page(markdown, offset)
+                findings.append(
+                    {
+                        "kind": kind,
+                        "line": line_number,
+                        "pdf_page": pdf_page,
+                        "span": span,
+                        "recovered": recovered,
+                        "codec": codec,
+                        "snippet": " ".join(content.split())[:200],
+                        "message": (
+                            f"{kind} math at line {line_number} contains likely UTF-8-as-{codec} "
+                            "mojibake; validator does not repair the formula"
+                        ),
+                    }
+                )
+                break
+    return findings
+
+
 def suspicious_math_blocks(markdown: str) -> list[str]:
     """Find math spans that contain likely prose rather than a formula.
 
-    Short labels explicitly wrapped in ``\\text{...}`` are tolerated. Any CJK
-    character outside such a label is treated as a high-confidence extraction
-    error: even a short fragment may be prose that was accidentally wrapped in
-    a math block.
+    Short labels explicitly wrapped in ``\\text{...}`` are tolerated for this
+    prose check. Their contents are still inspected independently by
+    :func:`suspicious_math_mojibake`, so a CJK label is allowed but an encoding
+    corruption inside that label is not silently exempted.
     """
 
     findings: list[str] = []
@@ -729,6 +848,30 @@ def validate_markdown(
         _check(checks, "math.delimiters", "FAIL", "LaTeX delimiters are unbalanced", errors=math_errors)
     else:
         _check(checks, "math.delimiters", "PASS", "LaTeX delimiters are balanced")
+    brace_findings = suspicious_math_braces(markdown)
+    if brace_findings:
+        errors.append(f"{len(brace_findings)} math block(s) have unbalanced LaTeX braces")
+        _check(
+            checks,
+            "math.braces",
+            "FAIL",
+            "unbalanced or improperly nested LaTeX braces; validator does not repair formulas",
+            findings=brace_findings,
+        )
+    else:
+        _check(checks, "math.braces", "PASS", "all math spans have balanced unescaped LaTeX braces")
+    mojibake_findings = suspicious_math_mojibake(markdown)
+    if mojibake_findings:
+        errors.append(f"{len(mojibake_findings)} math block(s) contain likely UTF-8-as-GBK mojibake")
+        _check(
+            checks,
+            "math.mojibake",
+            "FAIL",
+            "likely UTF-8-as-GBK mojibake found inside math; validator does not repair formulas",
+            findings=mojibake_findings,
+        )
+    else:
+        _check(checks, "math.mojibake", "PASS", "no likely UTF-8-as-GBK mojibake inside math")
     suspicious_math = suspicious_math_blocks(markdown)
     if suspicious_math:
         errors.append(f"{len(suspicious_math)} math block(s) contain likely Chinese prose")
@@ -852,6 +995,8 @@ def validate_markdown(
             "page_markers": len(pages),
             "inline_math_markers": len(re.findall(r"(?<!\\)\$(?!\$)", markdown.replace("$$", ""))),
             "display_math_blocks": markdown.count("$$") // 2,
+            "suspicious_math_braces": len(brace_findings),
+            "suspicious_math_mojibake": len(mojibake_findings),
             "suspicious_math_blocks": len(suspicious_math),
             "suspicious_formula_artifact": len(artifact_findings),
             "transcription_notes": note_count,
