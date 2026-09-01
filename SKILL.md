@@ -107,9 +107,12 @@ source visual and made the immediate crop/table/formula decision.
 10. When Phase 1 reaches the final requested PDF page, transition to
     `status: visual_review` and automatically drain every page in
     `visual_review_required`. For each formula crop, inspect the source page:
-    confirmed structure may become conservative LaTeX (with the crop retained
-    when useful); an ambiguous structure stays crop-only or confirmed-text-only
-    and gets a concrete page-specific entry in `pending_review`. Never guess.
+    reconstruct the mathematical structure from the visual first, then use the
+    text candidate only as a secondary cross-check. A confirmed formula uses
+    `latex_confirmed` with visual provenance; an ambiguous structure stays
+    `crop_only` or confirmed-text-only and gets a concrete page-specific entry
+    in `pending_review`. Never guess or reuse the text candidate as the LaTeX
+    template.
     Apply the same retained/Markdown-sufficient/unresolved decision to every
     visual region. Only after the queue is empty, run
     `scripts/validate_md_assets.py` and repair every `FAIL`. In particular,
@@ -119,6 +122,13 @@ source visual and made the immediate crop/table/formula decision.
     from context. Then verify chapter continuity, formula delimiters, page
     markers, image links, note volume, and that the final requested page was
     reached before emitting the final state.
+
+`visual_review_required` means the source has not yet been inspected. A final
+`pending_review` item means the source was inspected but the issue remains
+unresolved. Every final pending item must identify `pdf_page`, `type` or
+`kind`, `status: visually_reviewed_unresolved`, and a concrete reason; never
+use phrases such as “需回看 PDF”, “待视觉确认”, or “confirm later” in a final
+pending reason.
 
 ## Formula extraction-artifact gate
 
@@ -137,6 +147,31 @@ before marking that page `visually_verified`. Never use physical intuition to
 turn a flagged fragment into a plausible formula. If the source remains
 unreadable, keep only the confirmed portion, add a page-specific
 `Transcription note`, and retain the page in `pending_review`.
+
+## Visual formula reconstruction contract
+
+A visually confirmed formula MUST be reconstructed from the PDF visual or its
+formula crop. The text-layer candidate may locate the expression and provide a
+secondary ordinary-character cross-check, but it MUST NOT serve as the
+structural template for final LaTeX. In Phase 2, temporarily ignore the
+candidate's flattened two-dimensional structure and reread the visual for
+glyphs, subscripts, superscripts, fractions, radicals, grouping, Greek letters,
+vectors, operators, and unit exponents before writing LaTeX.
+
+Do not turn strings such as `vx`, `v0`, `omega2`, `Deltat`, or `v2/r` into a
+formula by string cleanup or physics familiarity. Inspect the visual to decide
+whether the source shows a subscript, superscript, fraction, or an ordinary
+product/variable. The final structure must be determined by visual evidence;
+text-layer content is only a locator and cross-check.
+
+Record every confirmed formula decision with `disposition: latex_confirmed`,
+`verification: visual`, a non-empty `latex`, and either `source_asset` or
+`source_pdf_page`. A `conservative_latex` label without this provenance is not
+a valid final decision. If the visual was inspected but the structure remains
+unsafe, use `disposition: crop_only`, `verification: visual`, a source asset or
+page, and an `unresolved_reason`; add the corresponding concrete
+`pending_review` item. Do not mark a page `visually_verified` when its formula
+decisions are missing, ambiguous, or lack this provenance.
 
 ## Visual-required pages and completion
 

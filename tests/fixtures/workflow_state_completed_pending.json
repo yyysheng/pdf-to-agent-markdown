@@ -9,7 +9,10 @@
   "pending_review": [
     {
       "pdf_page": 3,
-      "reason": "formula denominator remains visually ambiguous"
+      "type": "formula",
+      "status": "visually_reviewed_unresolved",
+      "reason": "Denominator remains ambiguous after inspecting the source crop.",
+      "source_asset": "assets/pdf_page_003_formula_01.png"
     }
   ]
 }

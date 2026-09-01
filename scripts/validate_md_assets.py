@@ -66,10 +66,176 @@ WORKFLOW_STATUSES = {
     "completed",
     "completed_with_review_items",
 }
+FORMULA_DISPOSITIONS = {
+    "latex_confirmed",
+    "crop_only",
+    "confirmed_text_only",
+    "not_formula",
+    "markdown_sufficient",
+    "removed",
+}
+UNREVIEWED_PENDING_PHRASES = (
+    "需回看",
+    "待视觉",
+    "待复核",
+    "以后复核",
+    "需要打开原页",
+    "confirm later",
+    "review later",
+    "reopen the pdf",
+    "reopen source page",
+)
 
 
 def _check(checks: list[dict[str, Any]], check_id: str, status: str, message: str, **details: Any) -> None:
     checks.append({"id": check_id, "status": status, "message": message, **details})
+
+
+def _formula_decision_entries(state: dict[str, Any]) -> list[tuple[int | None, Any]]:
+    """Return formula decisions with their optional source-page key."""
+
+    entries: list[tuple[int | None, Any]] = []
+    standalone = state.get("formula_decisions", [])
+    if isinstance(standalone, list):
+        entries.extend((None, decision) for decision in standalone)
+
+    page_decisions = state.get("visual_review_decisions", {})
+    if not isinstance(page_decisions, dict):
+        return entries
+    for raw_page, page_decision in page_decisions.items():
+        try:
+            page = int(raw_page)
+        except (TypeError, ValueError):
+            page = None
+        if not isinstance(page_decision, dict):
+            continue
+        if "disposition" in page_decision:
+            entries.append((page, page_decision))
+            continue
+        formulas = page_decision.get("formulas", [])
+        if isinstance(formulas, list):
+            entries.extend((page, decision) for decision in formulas)
+    return entries
+
+
+def _has_visual_source(decision: dict[str, Any]) -> bool:
+    source_asset = decision.get("source_asset")
+    if isinstance(source_asset, str) and source_asset.strip():
+        return True
+    source_page = decision.get("source_pdf_page")
+    return isinstance(source_page, int) and not isinstance(source_page, bool) and source_page > 0
+
+
+def _formula_candidate_pages(state: dict[str, Any]) -> dict[int, list[Any]]:
+    candidates = state.get("formula_candidates", {})
+    if not isinstance(candidates, dict):
+        return {}
+    result: dict[int, list[Any]] = {}
+    for raw_page, values in candidates.items():
+        try:
+            page = int(raw_page)
+        except (TypeError, ValueError):
+            continue
+        if isinstance(values, list) and values:
+            result[page] = values
+    return result
+
+
+def validate_formula_provenance(state: dict[str, Any]) -> dict[str, Any]:
+    """Check visual provenance without judging whether any formula is correct."""
+
+    errors: list[str] = []
+    warnings: list[str] = []
+    entries = _formula_decision_entries(state)
+    decisions_by_page: dict[int, list[Any]] = {}
+
+    for page, decision in entries:
+        location = f" on PDF page {page}" if page is not None else ""
+        if page is not None:
+            decisions_by_page.setdefault(page, []).append(decision)
+        if not isinstance(decision, dict):
+            errors.append(f"formula decision{location} must be an object")
+            continue
+        disposition = decision.get("disposition")
+        if disposition == "conservative_latex":
+            errors.append(f"formula decision{location} uses legacy conservative_latex; use latex_confirmed")
+            continue
+        if disposition not in FORMULA_DISPOSITIONS:
+            errors.append(f"formula decision{location} has unknown disposition: {disposition!r}")
+            continue
+        if disposition in {"latex_confirmed", "crop_only"}:
+            if decision.get("verification") != "visual":
+                errors.append(f"{disposition} formula decision{location} lacks verification: visual")
+            if not _has_visual_source(decision):
+                errors.append(f"{disposition} formula decision{location} lacks source_asset or source_pdf_page")
+        if disposition == "latex_confirmed":
+            latex = decision.get("latex")
+            if not isinstance(latex, str) or not latex.strip():
+                errors.append(f"latex_confirmed formula decision{location} lacks non-empty latex")
+        if disposition == "crop_only":
+            unresolved_reason = decision.get("unresolved_reason")
+            if not isinstance(unresolved_reason, str) or not unresolved_reason.strip():
+                errors.append(f"crop_only formula decision{location} lacks unresolved_reason")
+
+    visually_verified = state.get("visual_verified_pdf_pages", [])
+    if not isinstance(visually_verified, list):
+        errors.append("visual_verified_pdf_pages must be a list")
+        visually_verified = []
+    candidate_pages = _formula_candidate_pages(state)
+    for raw_page in visually_verified:
+        try:
+            page = int(raw_page)
+        except (TypeError, ValueError):
+            errors.append(f"visual_verified_pdf_pages contains a non-integer page: {raw_page!r}")
+            continue
+        candidates = candidate_pages.get(page, [])
+        if not candidates:
+            continue
+        page_decisions = decisions_by_page.get(page, [])
+        if not page_decisions:
+            errors.append(f"visually_verified PDF page {page} lacks formula decisions")
+        elif len(page_decisions) != len(candidates):
+            errors.append(
+                f"visually_verified PDF page {page} has {len(page_decisions)} formula decisions "
+                f"for {len(candidates)} formula candidate(s)"
+            )
+
+    status = "FAIL" if errors else "WARN" if warnings else "PASS"
+    return {
+        "status": status,
+        "formula_decisions": len(entries),
+        "errors": errors,
+        "warnings": warnings,
+    }
+
+
+def validate_pending_review_semantics(pending_review: list[Any]) -> dict[str, Any]:
+    """Ensure final pending items mean reviewed-but-unresolved, not queued work."""
+
+    errors: list[str] = []
+    for index, item in enumerate(pending_review):
+        label = f"pending_review[{index}]"
+        if not isinstance(item, dict):
+            errors.append(f"{label} must be an object with a concrete PDF page and reason")
+            continue
+        page = item.get("pdf_page")
+        if not isinstance(page, int) or isinstance(page, bool) or page <= 0:
+            errors.append(f"{label} must identify a positive integer pdf_page")
+        if not (item.get("type") or item.get("kind")):
+            errors.append(f"{label} must identify its type or kind")
+        if item.get("status") != "visually_reviewed_unresolved":
+            errors.append(f"{label} must use status: visually_reviewed_unresolved")
+        reason = item.get("reason")
+        if not isinstance(reason, str) or not reason.strip():
+            errors.append(f"{label} must contain a concrete reason")
+        elif any(phrase.casefold() in reason.casefold() for phrase in UNREVIEWED_PENDING_PHRASES):
+            errors.append(f"{label} reason still describes unperformed visual review")
+    status = "FAIL" if errors else "PASS"
+    return {
+        "status": status,
+        "items": len(pending_review),
+        "errors": errors,
+    }
 
 
 def validate_conversion_state(state: dict[str, Any]) -> dict[str, Any]:
@@ -98,6 +264,10 @@ def validate_conversion_state(state: dict[str, Any]) -> dict[str, Any]:
         warnings.append("completed_with_review_items has no pending_review items")
     if workflow_status == "visual_review" and not visual_queue:
         warnings.append("visual_review has no queued pages")
+    provenance_report = validate_formula_provenance(state)
+    pending_report = validate_pending_review_semantics(pending_review)
+    errors.extend(provenance_report["errors"])
+    errors.extend(pending_report["errors"])
     status = "FAIL" if errors else "WARN" if warnings else "PASS"
     return {
         "status": status,
@@ -106,6 +276,8 @@ def validate_conversion_state(state: dict[str, Any]) -> dict[str, Any]:
         "pending_review": len(pending_review),
         "errors": errors,
         "warnings": warnings,
+        "formula_provenance": provenance_report,
+        "pending_review_semantics": pending_report,
     }
 
 

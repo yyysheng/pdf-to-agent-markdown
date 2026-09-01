@@ -28,9 +28,40 @@ Required workflow for a suspected formula:
 
 1. Locate the expression in the text layer if that is useful.
 2. Open the original PDF page and inspect the expression visually.
-3. Write LaTeX only for the structure and glyphs confirmed by the page.
-4. Run the deterministic validator and repair any suspicious math finding
+3. Temporarily ignore the text candidate's flattened two-dimensional layout.
+   Reconstruct glyphs, subscripts, superscripts, fractions, radicals, grouping,
+   Greek letters, vectors, operators, and unit exponents from the PDF visual or
+   formula crop.
+4. Use the text candidate only as a secondary ordinary-character cross-check;
+   it must not be the structural template for the final LaTeX.
+5. Write LaTeX only for the structure and glyphs confirmed by the visual.
+6. Run the deterministic validator and repair any suspicious math finding
    before continuing.
+
+Strings such as `vx`, `v0`, `omega2`, `Deltat`, and `v2/r` cannot be repaired
+by string cleanup or familiar physics. Inspect the visual to determine whether
+they contain subscripts, superscripts, fractions, or ordinary products. Visual
+evidence determines the final mathematical structure.
+
+## Formula provenance
+
+A confirmed formula must be recorded in the conversion state as an explicit
+visual decision, for example:
+
+```json
+{
+  "source_text": "ω＝Δt",
+  "source_asset": "assets/pdf_page_029_formula_01.png",
+  "disposition": "latex_confirmed",
+  "verification": "visual",
+  "latex": "\\omega=\\frac{\\Delta\\theta}{\\Delta t}"
+}
+```
+
+If no crop was needed, use `source_pdf_page` instead of `source_asset`. A
+`latex_confirmed` decision without `verification: visual` and a traceable
+visual source is invalid. The old `conservative_latex` label is not a final
+provenance state.
 
 The validator also runs a structural `math.extraction_artifact` screen. Scores
 from 3 to 5 are warnings and scores of 6 or more are failures. Signals include
@@ -69,11 +100,14 @@ Every formula crop created during progressive transcription is a Phase 2
 checkpoint item. Reopen the source PDF page and inspect the crop in context:
 
 - If every relevant glyph, grouping, exponent, sign, and unit relationship is
-  clear, replace the text-layer fragment with conservative LaTeX and retain the
-  crop only when it remains useful evidence.
-- If the expression is legible but its structure is not safe to encode, keep a
-  bounded crop or confirmed-text-only representation and add one concrete
-  `pending_review` entry naming the PDF page and the ambiguous region.
+  clear after visual reconstruction, replace the text-layer fragment with
+  `latex_confirmed` LaTeX and record `verification: visual` plus
+  `source_asset` or `source_pdf_page`. Retain the crop when it remains useful
+  evidence.
+- If the expression is legible but its structure is not safe to encode after
+  visual inspection, keep a bounded crop or confirmed-text-only
+  representation and add one concrete `pending_review` entry naming the PDF
+  page, ambiguous region, and `status: visually_reviewed_unresolved`.
 - If the crop is decorative, redundant, or not a formula after visual review,
   remove it and clear the queue item.
 

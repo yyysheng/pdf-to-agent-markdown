@@ -25,7 +25,15 @@ state:
   "completed_pdf_pages": 128,
   "current_section": "第三章 第二节",
   "output": "book.md",
-  "pending_review": [47, 83],
+  "pending_review": [
+    {
+      "pdf_page": 47,
+      "type": "formula",
+      "status": "visually_reviewed_unresolved",
+      "reason": "Denominator remains ambiguous after inspecting the source crop.",
+      "source_asset": "assets/pdf_page_047_formula_01.png"
+    }
+  ],
   "visual_review_required": [83],
   "status": "in_progress"
 }
@@ -48,7 +56,10 @@ page has been written, automatically change the state to
 request for another user message. Inspect the source page for every queue item,
 record `visually_verified_pdf_pages` only after the inspection, and either
 retain a necessary visual, replace it with faithful Markdown, or add a
-page-specific unresolved item to `pending_review`.
+page-specific unresolved item to `pending_review`. A confirmed formula must
+also have a formula decision with `disposition: latex_confirmed`,
+`verification: visual`, and `source_asset` or `source_pdf_page`; a crop-only
+formula must carry the same visual provenance and an unresolved reason.
 
 Phase 3 starts only when `visual_review_required` is empty. Run deterministic
 QA, repair hard failures, and verify page-marker and asset continuity. A clean
@@ -70,9 +81,11 @@ not fully resolved.
    anomalies is `Visual-required` and must be opened before it is completed.
 4. Transcribe immediately into the same Markdown, including source-page
    markers and bounded visual evidence.
-5. Resolve formula structure, text-layer corruption, and crop necessity during
-   that page inspection. Do not add a generic "confirm later" note for an asset
-   already retained in Markdown.
+5. Resolve formula structure by reading the PDF visual first; use text-layer
+   content only to locate and cross-check ordinary characters. Record visual
+   formula provenance and resolve crop necessity during that inspection. Do not
+   add a generic "confirm later" note for an asset already retained in
+   Markdown.
 6. At chapter transitions, check continuity, headings, unresolved notes, and
    the next source location before advancing.
 7. At EOF, verify that the last requested PDF page was reached, run the
@@ -82,3 +95,9 @@ not fully resolved.
 
 Never write internal `Batch`, `Chunk`, or context-window labels into the final
 Markdown. They are process state, not source content.
+
+`visual_review_required` is the active queue of pages not yet inspected.
+`pending_review` is only for pages already inspected but still unresolved. Final
+pending entries must use `status: visually_reviewed_unresolved`, identify the
+PDF page and type, and contain a concrete reason; they must not say to reopen
+or review the source later.

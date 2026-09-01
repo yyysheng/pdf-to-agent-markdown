@@ -16,8 +16,9 @@ line breaks.
   blockquotes when that makes their role clear. Do not merge them silently into
   surrounding prose.
 - Keep original content separate from Agent review notes. Use a visible note,
-  for example `> [Transcription note: ...]`, for uncertainty or a request to
-  revisit the source.
+  for example `> [Transcription note: ...]`, for a concrete uncertainty or
+  unresolved visual decision. In a final state, the note must describe an issue
+  already inspected and must not be a generic request to revisit the source.
 
 ## Traceability
 

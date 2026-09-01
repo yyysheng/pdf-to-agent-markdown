@@ -1,0 +1,35 @@
+{
+  "schema_version": 3,
+  "skill": {
+    "name": "pdf-to-agent-markdown",
+    "revision": "test"
+  },
+  "status": "completed_with_review_items",
+  "visual_review_required": [],
+  "pending_review": [
+    {
+      "pdf_page": 29,
+      "type": "formula",
+      "status": "visually_reviewed_unresolved",
+      "reason": "Denominator remains ambiguous after inspecting the source crop.",
+      "source_asset": "assets/formula.png"
+    }
+  ],
+  "formula_candidates": {
+    "29": ["ω＝Δt"]
+  },
+  "visual_verified_pdf_pages": [29],
+  "visual_review_decisions": {
+    "29": {
+      "formulas": [
+        {
+          "source_text": "ω＝Δt",
+          "source_asset": "assets/formula.png",
+          "disposition": "crop_only",
+          "verification": "visual",
+          "unresolved_reason": "Denominator remains ambiguous after visual inspection."
+        }
+      ]
+    }
+  }
+}

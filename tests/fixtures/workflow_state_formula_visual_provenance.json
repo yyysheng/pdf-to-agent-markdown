@@ -1,0 +1,27 @@
+{
+  "schema_version": 3,
+  "skill": {
+    "name": "pdf-to-agent-markdown",
+    "revision": "test"
+  },
+  "status": "completed",
+  "visual_review_required": [],
+  "pending_review": [],
+  "formula_candidates": {
+    "19": ["vx=v0"]
+  },
+  "visual_verified_pdf_pages": [19],
+  "visual_review_decisions": {
+    "19": {
+      "formulas": [
+        {
+          "source_text": "vx=v0",
+          "source_asset": "assets/formula.png",
+          "disposition": "latex_confirmed",
+          "verification": "visual",
+          "latex": "v_x=v_0"
+        }
+      ]
+    }
+  }
+}

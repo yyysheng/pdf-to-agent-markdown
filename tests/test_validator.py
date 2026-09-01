@@ -12,6 +12,7 @@ from validate_md_assets import (  # noqa: E402
     delimiter_errors,
     suspicious_formula_artifacts,
     validate_conversion_state,
+    validate_pending_review_semantics,
     validate_markdown,
 )
 
@@ -199,6 +200,42 @@ $$
         )
         self.assertEqual(unresolved["workflow_status"], "completed_with_review_items")
         self.assertEqual(unresolved["pending_review"], 1)
+
+    def test_formula_decisions_require_visual_provenance(self) -> None:
+        missing = json.loads(
+            (FIXTURE_ROOT / "workflow_state_formula_without_provenance.json").read_text(encoding="utf-8")
+        )
+        missing_report = validate_conversion_state(missing)
+        self.assertEqual(missing_report["status"], "FAIL")
+        self.assertEqual(missing_report["formula_provenance"]["status"], "FAIL")
+
+        confirmed = json.loads(
+            (FIXTURE_ROOT / "workflow_state_formula_visual_provenance.json").read_text(encoding="utf-8")
+        )
+        confirmed_report = validate_conversion_state(confirmed)
+        self.assertEqual(confirmed_report["status"], "PASS")
+        self.assertEqual(confirmed_report["formula_provenance"]["status"], "PASS")
+
+        crop_only = json.loads(
+            (FIXTURE_ROOT / "workflow_state_formula_crop_only.json").read_text(encoding="utf-8")
+        )
+        crop_report = validate_conversion_state(crop_only)
+        self.assertEqual(crop_report["status"], "WARN")
+        self.assertEqual(crop_report["formula_provenance"]["status"], "PASS")
+        self.assertEqual(crop_report["pending_review_semantics"]["status"], "PASS")
+
+    def test_pending_review_rejects_unperformed_review_language(self) -> None:
+        report = validate_pending_review_semantics(
+            [
+                {
+                    "pdf_page": 83,
+                    "type": "formula",
+                    "status": "visually_reviewed_unresolved",
+                    "reason": "需回看原 PDF 页面。",
+                }
+            ]
+        )
+        self.assertEqual(report["status"], "FAIL")
 
 
 if __name__ == "__main__":
