@@ -212,6 +212,11 @@ content is not duplicated. See
 
 ## Supporting guidance
 
+When the bundled `scripts/vision_first_pdf_to_md.py` runner is available, use
+it as the lightweight workflow/state/crop orchestration layer. It does not
+replace Agent visual interpretation: only explicit Agent visual decisions may
+produce `latex_confirmed`.
+
 - [references/markdown-format.md](references/markdown-format.md) for the
   semantic Markdown and traceability contract.
 - [references/math-transcription.md](references/math-transcription.md) for
