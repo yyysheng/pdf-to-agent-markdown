@@ -85,6 +85,11 @@ source visual and made the immediate crop/table/formula decision.
    `Transcription note` rather than guessing. Chinese prose must not enter a
    math block unless it is a short, necessary mathematical label. Queue the
    page in `visual_review_required` until this disposition is complete.
+   When a runner is used, retain both a tight formula crop and a semantically
+   expanded context crop. Context may include the same visual line, nearby
+   candidate bboxes, or a local fraction/multiline region. Neighboring
+   candidates may share one visual review group, but their strings must never be
+   concatenated or treated as a formula template.
 7. Decide visually which regions contain information that text cannot preserve,
    and make the retention decision immediately. Retain necessary diagrams,
    apparatus, free-body/circuit/optical diagrams, axes, curves, maps,
@@ -167,11 +172,18 @@ text-layer content is only a locator and cross-check.
 Record every confirmed formula decision with `disposition: latex_confirmed`,
 `verification: visual`, a non-empty `latex`, and either `source_asset` or
 `source_pdf_page`. A `conservative_latex` label without this provenance is not
-a valid final decision. If the visual was inspected but the structure remains
-unsafe, use `disposition: crop_only`, `verification: visual`, a source asset or
-page, and an `unresolved_reason`; add the corresponding concrete
-`pending_review` item. Do not mark a page `visually_verified` when its formula
-decisions are missing, ambiguous, or lack this provenance.
+a valid final decision. Runner-managed formula decisions additionally carry a
+stable `candidate_id`, `source_asset`, `context_asset`, `context_type`, and
+`source_candidates`; the latter identifies the visual group and is not a text
+join operation. If visual inspection shows that a candidate is only a number,
+unit, prose fragment, table fragment, or part of a larger relation, close it
+with `disposition: not_formula` (or `removed`) and a concrete reason. It must
+not remain pending merely because the extractor saw a math cue. If the visual
+was inspected but the structure remains unsafe, use `disposition: crop_only`,
+`verification: visual`, the tight/context evidence, and an
+`unresolved_reason`; add the corresponding concrete `pending_review` item. Do
+not mark a page `visually_verified` when its formula decisions are missing,
+ambiguous, or lack this provenance.
 
 ## Visual-required pages and completion
 

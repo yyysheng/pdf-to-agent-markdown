@@ -141,6 +141,13 @@ def _formula_candidate_pages(state: dict[str, Any]) -> dict[int, list[Any]]:
     return result
 
 
+def _metadata_relative_path(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    path = Path(value)
+    return not path.is_absolute() and ".." not in path.parts
+
+
 def validate_formula_provenance(state: dict[str, Any]) -> dict[str, Any]:
     """Check visual provenance without judging whether any formula is correct."""
 
@@ -148,6 +155,18 @@ def validate_formula_provenance(state: dict[str, Any]) -> dict[str, Any]:
     warnings: list[str] = []
     entries = _formula_decision_entries(state)
     decisions_by_page: dict[int, list[Any]] = {}
+    raw_candidate_records = state.get("formula_candidate_records")
+    candidate_records_by_page: dict[int, list[dict[str, Any]]] = {}
+    if isinstance(raw_candidate_records, dict):
+        for raw_page, records in raw_candidate_records.items():
+            try:
+                page = int(raw_page)
+            except (TypeError, ValueError):
+                continue
+            if isinstance(records, list):
+                candidate_records_by_page[page] = [record for record in records if isinstance(record, dict)]
+    has_candidate_records = bool(candidate_records_by_page)
+    visual_formula_dispositions = {"latex_confirmed", "crop_only", "not_formula", "removed"}
 
     for page, decision in entries:
         location = f" on PDF page {page}" if page is not None else ""
@@ -163,11 +182,26 @@ def validate_formula_provenance(state: dict[str, Any]) -> dict[str, Any]:
         if disposition not in FORMULA_DISPOSITIONS:
             errors.append(f"formula decision{location} has unknown disposition: {disposition!r}")
             continue
-        if disposition in {"latex_confirmed", "crop_only"}:
+        if disposition in visual_formula_dispositions:
             if decision.get("verification") != "visual":
                 errors.append(f"{disposition} formula decision{location} lacks verification: visual")
             if not _has_visual_source(decision):
                 errors.append(f"{disposition} formula decision{location} lacks source_asset or source_pdf_page")
+            if has_candidate_records:
+                context_asset = decision.get("context_asset")
+                if not _metadata_relative_path(context_asset):
+                    errors.append(f"{disposition} formula decision{location} lacks relative context_asset")
+                context_type = decision.get("context_type")
+                if context_type not in {"line", "region"}:
+                    errors.append(f"{disposition} formula decision{location} lacks context_type line/region")
+                source_candidates = decision.get("source_candidates")
+                if not isinstance(source_candidates, list) or not source_candidates:
+                    errors.append(f"{disposition} formula decision{location} lacks source_candidates")
+                elif any(isinstance(item, bool) or not isinstance(item, int) or item <= 0 for item in source_candidates):
+                    errors.append(f"{disposition} formula decision{location} has invalid source_candidates")
+                candidate_id = decision.get("candidate_id")
+                if not isinstance(candidate_id, str) or not candidate_id.strip():
+                    errors.append(f"{disposition} formula decision{location} lacks candidate_id")
         if disposition == "latex_confirmed":
             latex = decision.get("latex")
             if not isinstance(latex, str) or not latex.strip():
@@ -176,6 +210,15 @@ def validate_formula_provenance(state: dict[str, Any]) -> dict[str, Any]:
             unresolved_reason = decision.get("unresolved_reason")
             if not isinstance(unresolved_reason, str) or not unresolved_reason.strip():
                 errors.append(f"crop_only formula decision{location} lacks unresolved_reason")
+        if disposition in {"not_formula", "removed"}:
+            reason = decision.get("reason", decision.get("unresolved_reason"))
+            if not isinstance(reason, str) or not reason.strip():
+                errors.append(f"{disposition} formula decision{location} lacks a concrete reason")
+        candidate_index = decision.get("candidate_index")
+        if candidate_index is not None and (
+            isinstance(candidate_index, bool) or not isinstance(candidate_index, int) or candidate_index <= 0
+        ):
+            errors.append(f"formula decision{location} has invalid candidate_index")
 
     visually_verified = state.get("visual_verified_pdf_pages", [])
     if not isinstance(visually_verified, list):

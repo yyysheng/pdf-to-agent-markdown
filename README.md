@@ -10,6 +10,11 @@ The skill works through complete PDFs progressively while preserving semantic
 structure, confirmed LaTeX formulas, reliable tables, and necessary visuals
 such as diagrams and apparatus.
 
+Formula review keeps a tight crop plus semantically expanded line/region
+context. Neighboring candidates may share visual evidence, but their text is
+never concatenated; false-positive candidates can be explicitly closed as
+`not_formula` with a reason.
+
 scripts/validate_md_assets.py provides deterministic QA for Markdown hygiene,
 page markers, image references, formula delimiters, and structural extraction
 warnings. It does not understand formula semantics, decide whether an
